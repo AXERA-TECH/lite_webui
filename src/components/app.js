@@ -288,13 +288,19 @@ export class App {
     const apiMessages = formatMessagesForApi([...(preConv?.messages || []), userMessage]);
 
     try {
-      this.chat.startAssistantMessage();
+      let started = false;
       let fullText = '';
 
       for await (const chunk of streamCompletion(settings.baseUrl, settings.apiKey, model, apiMessages)) {
+        if (!started) {
+          this.chat.startAssistantMessage();
+          started = true;
+        }
         fullText += chunk;
         this.chat.appendToAssistantMessage(chunk);
       }
+
+      if (!started) this.chat.startAssistantMessage();
 
       // Finalize
       this.chat.finalizeAssistantMessage(fullText);
