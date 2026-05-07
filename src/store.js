@@ -60,7 +60,15 @@ function load(key, fallback) {
 }
 
 function save(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    if (e?.name === 'QuotaExceededError' || e?.code === 22) {
+      console.warn('[store] localStorage quota exceeded — conversation not persisted');
+    } else {
+      throw e;
+    }
+  }
 }
 
 function uuid() {

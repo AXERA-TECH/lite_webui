@@ -155,8 +155,8 @@ export class Chat {
         <img src="${img.image_url?.url || ''}" alt="Attached image" class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] object-cover mb-2" />
       `).join('');
 
-      const videoHtml = videos.map(() => `
-        <video src="${escapeHtml(videos[0]?.video_url?.url || '')}" controls muted playsinline
+      const videoHtml = videos.map(vid => `
+        <video src="${escapeHtml(vid.video_url?.url || '')}" controls muted playsinline
           class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] bg-black mb-2"></video>
       `).join('');
 

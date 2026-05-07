@@ -255,10 +255,19 @@ export class App {
       );
     }
 
-    // Add to store & render
-    store.addMessage(convId, userMessage);
-    this.chat.appendUserMessage(userMessage);
-    this._updateContextInfo();
+    // Add to store & render — wrapped so any localStorage/DOM error is caught
+    let renderOk = false;
+    try {
+      store.addMessage(convId, userMessage);
+      this.chat.appendUserMessage(userMessage);
+      this._updateContextInfo();
+      renderOk = true;
+    } catch (err) {
+      this.chat.showError(`Error: ${err.message}`);
+      this.inputBar.setSending(false);
+      this.inputBar.focus();
+      return;
+    }
 
     // Update title if first message
     const conv = store.getCurrentConversation();
@@ -272,9 +281,11 @@ export class App {
     this.inputBar.setSending(true);
     this.chat.showTypingIndicator();
 
-    // Get conversation history for API
-    const currentConv = store.getCurrentConversation();
-    const apiMessages = formatMessagesForApi(currentConv.messages);
+    // Get conversation history for API.
+    // Use preConv (read before the store write) + userMessage directly so the
+    // current message is always included even if the localStorage save failed,
+    // and formatMessagesForApi can correctly identify it as the latest message.
+    const apiMessages = formatMessagesForApi([...(preConv?.messages || []), userMessage]);
 
     try {
       this.chat.startAssistantMessage();

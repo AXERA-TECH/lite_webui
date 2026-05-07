@@ -209,8 +209,27 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
 }
 
 export function formatMessagesForApi(messages) {
-  return messages.map(msg => {
+  // Find the index of the last user message so we can preserve its media dataUrls.
+  // Historical video messages are stripped (huge dataUrls, already processed by the model).
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') { lastUserIdx = i; break; }
+  }
+
+  return messages.map((msg, i) => {
     if (msg.role === 'assistant') return { role: 'assistant', content: msg.content };
-    return { role: 'user', content: msg.content };
+
+    // For the most recent user message keep content verbatim (includes any media dataUrl).
+    if (i === lastUserIdx || !Array.isArray(msg.content)) {
+      return { role: 'user', content: msg.content };
+    }
+
+    // For historical user messages: replace video_url parts with a text note so the
+    // API payload stays small and uses only standard content types.
+    const content = msg.content.map(part => {
+      if (part?.type === 'video_url') return { type: 'text', text: '[Video attachment]' };
+      return part;
+    });
+    return { role: 'user', content };
   });
 }
