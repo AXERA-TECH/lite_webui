@@ -60,9 +60,10 @@ hljs.registerLanguage('yml', langYaml);
 
 const renderer = new marked.Renderer();
 
-renderer.code = function (token) {
-  const code = token.text || '';
-  const lang = (token.lang || '').split(/[\s.]/)[0].toLowerCase();
+// marked v12 uses the legacy renderer API: code(code, lang, escaped) and codespan(code)
+renderer.code = function (code, lang, _escaped) {
+  code = code || '';
+  lang = ((lang || '').split(/[\s.]/)[0] || '').toLowerCase();
   let highlighted;
   try {
     if (lang && hljs.getLanguage(lang)) {
@@ -77,9 +78,8 @@ renderer.code = function (token) {
   return `<div class="code-block-wrapper">${langLabel}<button class="copy-btn" aria-label="Copy code">Copy</button><pre><code class="hljs language-${lang || 'plaintext'}">${highlighted}</code></pre></div>`;
 };
 
-renderer.codespan = function (token) {
-  const text = token.text || '';
-  return `<code>${escapeHtml(text)}</code>`;
+renderer.codespan = function (code) {
+  return `<code>${escapeHtml(code || '')}</code>`;
 };
 
 function escapeHtml(str) {
