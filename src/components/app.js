@@ -258,6 +258,7 @@ export class App {
     // Add to store & render — wrapped so any localStorage/DOM error is caught
     let renderOk = false;
     try {
+      this.chat.clearError();
       store.addMessage(convId, userMessage);
       this.chat.appendUserMessage(userMessage);
       this._updateContextInfo();

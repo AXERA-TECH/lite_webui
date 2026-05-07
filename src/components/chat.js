@@ -45,6 +45,7 @@ export class Chat {
     this._offset = 0; // how many messages we've hidden
     this._streamingEl = null;
     this._typingEl = null;
+    this._errorEl = null;
   }
 
   render() {
@@ -282,7 +283,7 @@ export class Chat {
     const container = this.el.querySelector('#chat-messages');
     this.hideTypingIndicator();
     if (this._streamingEl) {
-      this._streamingEl.innerHTML = `<span class="text-red-400">${escapeHtml(message)}</span>`;
+      this._streamingEl.innerHTML = `<span class="text-red-600 dark:text-red-400">${escapeHtml(message)}</span>`;
       this._streamingEl = null;
       this._streamingText = '';
       return;
@@ -290,12 +291,20 @@ export class Chat {
     const errEl = document.createElement('div');
     errEl.className = 'max-w-4xl mx-auto w-full px-6 mb-4 message-enter';
     errEl.innerHTML = `
-      <div class="bg-red-950/40 border border-red-900/40 rounded-xl px-4 py-3 text-[13px] text-red-400 flex items-center gap-2">
+      <div class="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/40 rounded-xl px-4 py-3 text-[13px] text-red-700 dark:text-red-400 flex items-center gap-2">
         ${icon('x')} ${escapeHtml(message)}
       </div>
     `;
+    this._errorEl = errEl;
     container.appendChild(errEl);
     this._scrollToBottom();
+  }
+
+  clearError() {
+    if (this._errorEl) {
+      this._errorEl.remove();
+      this._errorEl = null;
+    }
   }
 
   showSystemMessage(text) {
@@ -328,6 +337,7 @@ export class Chat {
     this._streamingEl = null;
     this._streamingText = '';
     this._typingEl = null;
+    this._errorEl = null;
     const container = this.el.querySelector('#chat-messages');
     if (container) container.innerHTML = this._welcomeScreen();
   }
