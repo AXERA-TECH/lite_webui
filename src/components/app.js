@@ -21,6 +21,10 @@ export class App {
     this.modelPicker = new ModelPicker();
     this.settingsModal = new SettingsModal();
     this._sidebarOpen = false;
+    // In-memory message cache keyed by convId.  Persists for the page session so
+    // that media (video/image dataUrls) remains visible even after an auto-reset
+    // clears localStorage, or when localStorage quota prevents persistence.
+    this._sessionMessages = new Map();
   }
 
   init() {
@@ -32,6 +36,25 @@ export class App {
     this.settingsModal.render(); // pre-render (portal pattern)
     this._updateContextInfo();
     this.inputBar.focus();
+  }
+
+  // --- Session message cache helpers ---
+
+  _pushSessionMsg(convId, msg) {
+    if (!this._sessionMessages.has(convId)) this._sessionMessages.set(convId, []);
+    this._sessionMessages.get(convId).push(msg);
+  }
+
+  _clearSessionMsgs(convId) {
+    this._sessionMessages.delete(convId);
+  }
+
+  // Returns a conv-like object backed by in-memory messages when available,
+  // so that media dataUrls survive auto-resets and localStorage quota failures.
+  _sessionConvFor(conv) {
+    if (!conv) return conv;
+    const mem = this._sessionMessages.get(conv.id);
+    return mem?.length ? { ...conv, messages: mem } : conv;
   }
 
   _render() {
@@ -155,7 +178,7 @@ export class App {
     if (currentId) {
       const conv = store.getCurrentConversation();
       if (conv) {
-        this.chat.loadConversation(conv);
+        this.chat.loadConversation(this._sessionConvFor(conv));
         this.modelPicker.syncToConversation(conv);
         this.inputBar.setModel(this.modelPicker.getModel());
         this._updateContextInfo();
@@ -188,7 +211,7 @@ export class App {
       this._updateContextInfo();
       return;
     }
-    this.chat.loadConversation(conv);
+    this.chat.loadConversation(this._sessionConvFor(conv));
     this.modelPicker.syncToConversation(conv);
     this.inputBar.setModel(this.modelPicker.getModel());
     this.sidebar.update();
@@ -206,6 +229,7 @@ export class App {
       const convId = store.getCurrentConversationId();
       if (convId) {
         store.clearMessages(convId);
+        this._clearSessionMsgs(convId);
         this.chat.clear();
         this._updateContextInfo();
       }
@@ -260,6 +284,7 @@ export class App {
     try {
       this.chat.clearError();
       store.addMessage(convId, userMessage);
+      this._pushSessionMsg(convId, userMessage);
       this.chat.appendUserMessage(userMessage);
       this._updateContextInfo();
       renderOk = true;
@@ -305,11 +330,13 @@ export class App {
 
       // Finalize
       this.chat.finalizeAssistantMessage(fullText);
-      store.addMessage(convId, {
+      const assistantMsg = {
         role: 'assistant',
         content: fullText,
         timestamp: new Date().toISOString(),
-      });
+      };
+      store.addMessage(convId, assistantMsg);
+      this._pushSessionMsg(convId, assistantMsg);
       this._updateContextInfo();
       this.sidebar.update();
     } catch (err) {
@@ -360,6 +387,7 @@ export class App {
   async _handleAudioTask({ convId, model, settings, instruction, audio }) {
     const userMessage = this._buildAudioUserMessage(audio, instruction);
     store.addMessage(convId, userMessage);
+    this._pushSessionMsg(convId, userMessage);
     this.chat.appendUserMessage(userMessage);
     this._updateContextInfo();
 
@@ -380,11 +408,13 @@ export class App {
         this.chat.hideTypingIndicator();
         this.chat.startAssistantMessage();
         this.chat.finalizeAssistantMessage(transcript);
-        store.addMessage(convId, {
+        const assistantMsg = {
           role: 'assistant',
           content: transcript,
           timestamp: new Date().toISOString(),
-        });
+        };
+        store.addMessage(convId, assistantMsg);
+        this._pushSessionMsg(convId, assistantMsg);
         this._updateContextInfo();
         this.sidebar.update();
         return;
@@ -418,11 +448,13 @@ export class App {
       }
 
       this.chat.finalizeAssistantMessage(fullText);
-      store.addMessage(convId, {
+      const assistantMsg = {
         role: 'assistant',
         content: fullText,
         timestamp: new Date().toISOString(),
-      });
+      };
+      store.addMessage(convId, assistantMsg);
+      this._pushSessionMsg(convId, assistantMsg);
       this._updateContextInfo();
       this.sidebar.update();
     } catch (err) {
