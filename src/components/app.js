@@ -433,8 +433,15 @@ export class App {
       };
 
       this.chat.appendGeneratedImageMessage(assistantMsg);
-      // Persist text-only version to localStorage (avoid storing large b64 dataUrls)
-      store.addMessage(convId, { role: 'assistant', content: assistantMsg.content, timestamp: assistantMsg.timestamp });
+      // Persist to localStorage. URL-based images are small and safe to store;
+      // base64 data URLs are excluded to avoid exceeding localStorage quota.
+      const persistedImages = dataUrls.filter(u => u.startsWith('http'));
+      store.addMessage(convId, {
+        role: 'assistant',
+        content: assistantMsg.content,
+        timestamp: assistantMsg.timestamp,
+        ...(persistedImages.length ? { generatedImages: persistedImages } : {}),
+      });
       this._pushSessionMsg(convId, assistantMsg);
       this._updateContextInfo();
       this.sidebar.update();
