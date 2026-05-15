@@ -41,7 +41,7 @@ export class InputBar {
       <div class="px-4 pb-4 pt-3 max-w-4xl mx-auto w-full">
         <input id="media-file-input" type="file" accept="${mediaAccept}" class="hidden" aria-label="Attach image or video" />
         <input id="audio-file-input" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" class="hidden" aria-label="Attach audio" />
-        <div class="flex flex-col bg-[var(--c-card)] border ${this._drawMode ? 'border-violet-400 dark:border-violet-500' : 'border-[var(--c-bd)]'} rounded-2xl focus-within:border-[var(--c-bd-hi)] transition-all duration-200 shadow-lg shadow-black/10">
+        <div id="input-box" class="flex flex-col bg-[var(--c-card)] border ${this._drawMode ? 'border-violet-400 dark:border-violet-500' : 'border-[var(--c-bd)]'} rounded-2xl focus-within:border-[var(--c-bd-hi)] transition-all duration-200 shadow-lg shadow-black/10">
 
           <div id="image-preview-area" class="hidden px-3 pt-3 pb-1">
             <div class="relative inline-block">
@@ -363,12 +363,29 @@ export class InputBar {
       if (this._pendingVideo) this._clearVideo();
       if (this._pendingAudio) this._clearAudio();
     }
-    // Re-render the whole input bar to update placeholder + border + button state
-    const oldEl = this.el;
-    const parent = oldEl.parentNode;
-    const newEl = this.render();
-    if (parent) parent.replaceChild(newEl, oldEl);
-    newEl.querySelector('#message-input')?.focus();
+    // Update DOM in-place to avoid replacing this.el (which would detach event listeners
+    // and break textarea.value = '' in _submit, or cause duplicate document listeners).
+    const box = this.el.querySelector('#input-box');
+    if (box) {
+      if (active) {
+        box.classList.remove('border-[var(--c-bd)]');
+        box.classList.add('border-violet-400', 'dark:border-violet-500');
+      } else {
+        box.classList.remove('border-violet-400', 'dark:border-violet-500');
+        box.classList.add('border-[var(--c-bd)]');
+      }
+    }
+    const textarea = this.el.querySelector('#message-input');
+    if (textarea) {
+      textarea.placeholder = active ? 'Describe what to draw\u2026' : 'Type a message\u2026';
+      textarea.focus();
+    }
+    const drawBtn = this.el.querySelector('#draw-mode-btn');
+    if (drawBtn && !drawBtn.disabled) {
+      drawBtn.className = active
+        ? 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-violet-500 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/30'
+        : 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
+    }
   }
 
   setSending(sending) {

@@ -414,6 +414,9 @@ export class App {
 
     try {
       const dataUrls = await generateImage(settings.baseUrl, settings.apiKey, model, prompt);
+      if (!dataUrls.length) {
+        throw new Error('No images returned — the model may not support image generation');
+      }
       const assistantMsg = {
         role: 'assistant',
         content: `Generated image for: "${prompt}"`,
