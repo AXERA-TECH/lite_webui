@@ -391,14 +391,22 @@ export class App {
   }
 
   async _handleDrawTask({ convId, model, settings, prompt, image = null }) {
+    const ts = new Date().toISOString();
+    // Full message (with source image for img2img) kept in-memory only — never in localStorage.
     const userMessage = {
       role: 'user',
-      content: prompt,
-      timestamp: new Date().toISOString(),
+      content: image?.dataUrl
+        ? [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: image.dataUrl } },
+          ]
+        : prompt,
+      timestamp: ts,
     };
 
     this.chat.clearError();
-    store.addMessage(convId, userMessage);
+    // Store text-only version in localStorage to avoid quota issues with dataUrls.
+    store.addMessage(convId, { role: 'user', content: prompt, timestamp: ts });
     this._pushSessionMsg(convId, userMessage);
     this.chat.appendUserMessage(userMessage);
     this._updateContextInfo();
