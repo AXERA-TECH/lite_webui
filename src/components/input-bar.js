@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { formatCompactTokenCount } from '../api.js';
-import { supportsAudio, supportsImage, supportsVideo } from '../capabilities.js';
+import { supportsAudio, supportsImage, supportsVideo, supportsImageGen } from '../capabilities.js';
 import { icon } from '../icons.js';
 
 const VIDEO_SIZE_LIMIT_MB = 50;
@@ -13,6 +13,7 @@ export class InputBar {
     this._pendingAudio = null; // { file }
     this._currentModel = '';
     this._sending = false;
+    this._drawMode = false;
   }
 
   render() {
@@ -28,16 +29,19 @@ export class InputBar {
     const imageSupported = supportsImage(this._currentModel, store.getModelCapabilities());
     const videoSupported = supportsVideo(this._currentModel, store.getModelCapabilities());
     const audioSupported = supportsAudio(this._currentModel, store.getModelCapabilities());
+    const imageGenSupported = supportsImageGen(this._currentModel, store.getModelCapabilities());
     const mediaSupported = imageSupported || videoSupported;
     const mediaAccept = [imageSupported && 'image/*', videoSupported && 'video/*'].filter(Boolean).join(',') || 'image/*,video/*';
     const mediaTitle = mediaSupported
       ? `Attach ${[imageSupported && 'image', videoSupported && 'video'].filter(Boolean).join(' / ')} (or paste)`
       : 'Vision not enabled for this model';
+    const drawTitle = imageGenSupported ? 'Generate image (Draw mode)' : 'Image generation not enabled for this model';
+    const placeholder = this._drawMode ? 'Describe what to draw…' : 'Type a message…';
     return `
       <div class="px-4 pb-4 pt-3 max-w-4xl mx-auto w-full">
         <input id="media-file-input" type="file" accept="${mediaAccept}" class="hidden" aria-label="Attach image or video" />
         <input id="audio-file-input" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" class="hidden" aria-label="Attach audio" />
-        <div class="flex flex-col bg-[var(--c-card)] border border-[var(--c-bd)] rounded-2xl focus-within:border-[var(--c-bd-hi)] transition-all duration-200 shadow-lg shadow-black/10">
+        <div class="flex flex-col bg-[var(--c-card)] border ${this._drawMode ? 'border-violet-400 dark:border-violet-500' : 'border-[var(--c-bd)]'} rounded-2xl focus-within:border-[var(--c-bd-hi)] transition-all duration-200 shadow-lg shadow-black/10">
 
           <div id="image-preview-area" class="hidden px-3 pt-3 pb-1">
             <div class="relative inline-block">
@@ -84,7 +88,7 @@ export class InputBar {
           <textarea
             id="message-input"
             class="bg-transparent px-4 pt-3 pb-1 text-[13.5px] text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none leading-relaxed resize-none w-full"
-            placeholder="Type a message…"
+            placeholder="${placeholder}"
             rows="1"
             style="max-height: 144px; overflow-y: auto;"
             aria-label="Message input"
@@ -105,6 +109,13 @@ export class InputBar {
                 aria-label="Attach audio"
                 title="${audioSupported ? 'Attach audio for transcription or translation' : 'Audio not enabled for this model'}">
                 ${icon('audio')}
+              </button>
+              <button id="draw-mode-btn"
+                class="flex items-center justify-center w-8 h-8 rounded-lg transition-all ${imageGenSupported ? (this._drawMode ? 'text-violet-500 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/30' : 'text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]') : 'text-[var(--c-tx3)] opacity-40 cursor-not-allowed'}"
+                ${imageGenSupported ? '' : 'disabled'}
+                aria-label="Toggle draw mode"
+                title="${drawTitle}">
+                ${icon('wand')}
               </button>
             </div>
             <span id="context-info"
@@ -128,6 +139,7 @@ export class InputBar {
     const sendBtn = this.el.querySelector('#send-btn');
     const mediaBtn = this.el.querySelector('#media-upload-btn');
     const audioBtn = this.el.querySelector('#audio-upload-btn');
+    const drawBtn = this.el.querySelector('#draw-mode-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     const audioInput = this.el.querySelector('#audio-file-input');
     const removeImageBtn = this.el.querySelector('#remove-image-btn');
@@ -146,6 +158,10 @@ export class InputBar {
     });
 
     sendBtn.addEventListener('click', () => this._submit());
+
+    drawBtn?.addEventListener('click', () => {
+      if (!drawBtn.disabled) this._toggleDrawMode();
+    });
 
     // Media (image/video) upload
     mediaBtn?.addEventListener('click', () => {
@@ -322,15 +338,37 @@ export class InputBar {
     const image = this._pendingImage;
     const video = this._pendingVideo;
     const audio = this._pendingAudio;
+    const draw = this._drawMode;
     this._clearImage();
     this._clearVideo();
     this._clearAudio();
+    if (this._drawMode) this._setDrawMode(false);
     textarea.value = '';
     this._autoResize(textarea);
 
     document.dispatchEvent(new CustomEvent('inputbar:send', {
-      detail: { text, image, video, audio },
+      detail: { text, image, video, audio, draw },
     }));
+  }
+
+  _toggleDrawMode() {
+    this._setDrawMode(!this._drawMode);
+  }
+
+  _setDrawMode(active) {
+    this._drawMode = active;
+    if (active) {
+      // Clear pending media when entering draw mode
+      if (this._pendingImage) this._clearImage();
+      if (this._pendingVideo) this._clearVideo();
+      if (this._pendingAudio) this._clearAudio();
+    }
+    // Re-render the whole input bar to update placeholder + border + button state
+    const oldEl = this.el;
+    const parent = oldEl.parentNode;
+    const newEl = this.render();
+    if (parent) parent.replaceChild(newEl, oldEl);
+    newEl.querySelector('#message-input')?.focus();
   }
 
   setSending(sending) {
@@ -370,11 +408,13 @@ export class InputBar {
   _updateAttachmentButtons() {
     const mediaBtn = this.el.querySelector('#media-upload-btn');
     const audioBtn = this.el.querySelector('#audio-upload-btn');
+    const drawBtn = this.el.querySelector('#draw-mode-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     if (!mediaBtn || !audioBtn) return;
     const imageSupported = supportsImage(this._currentModel, store.getModelCapabilities());
     const videoSupported = supportsVideo(this._currentModel, store.getModelCapabilities());
     const audioSupported = supportsAudio(this._currentModel, store.getModelCapabilities());
+    const imageGenSupported = supportsImageGen(this._currentModel, store.getModelCapabilities());
     const mediaSupported = imageSupported || videoSupported;
 
     if (mediaSupported) {
@@ -402,6 +442,21 @@ export class InputBar {
       audioBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
       audioBtn.title = 'Audio not enabled for this model';
       if (this._pendingAudio) this._clearAudio();
+    }
+
+    if (drawBtn) {
+      if (imageGenSupported) {
+        drawBtn.disabled = false;
+        drawBtn.className = this._drawMode
+          ? 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-violet-500 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/30'
+          : 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
+        drawBtn.title = 'Generate image (Draw mode)';
+      } else {
+        drawBtn.disabled = true;
+        drawBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
+        drawBtn.title = 'Image generation not enabled for this model';
+        if (this._drawMode) this._setDrawMode(false);
+      }
     }
   }
 

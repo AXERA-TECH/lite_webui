@@ -208,6 +208,33 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
   }
 }
 
+export async function generateImage(baseUrl, apiKey, model, prompt, options = {}) {
+  const { n = 1, size = '1024x1024', responseFormat = 'b64_json' } = options;
+  const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
+  const res = await fetch(`${urlBase}/v1/images/generations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model, prompt, n, size, response_format: responseFormat }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let errMsg = `Image generation failed (${res.status})`;
+    try {
+      const json = JSON.parse(text);
+      errMsg = json.error?.message || errMsg;
+    } catch {
+      if (text) errMsg += ': ' + text.slice(0, 200);
+    }
+    throw new Error(errMsg);
+  }
+  const json = await res.json();
+  const items = json.data || [];
+  return items.map(item => {
+    if (item.b64_json) return `data:image/png;base64,${item.b64_json}`;
+    return item.url || null;
+  }).filter(Boolean);
+}
+
 export function formatMessagesForApi(messages) {
   // Find the index of the last user message so we can preserve its media dataUrls.
   // Historical video messages are stripped (huge dataUrls, already processed by the model).

@@ -3,6 +3,7 @@ import {
   streamCompletion,
   formatMessagesForApi,
   transcribeAudio,
+  generateImage,
 } from '../api.js';
 import { estimateThreadTokens, resolveContextConfig } from '../context.js';
 import { Sidebar } from './sidebar.js';
@@ -152,7 +153,7 @@ export class App {
 
     // Send message
     document.addEventListener('inputbar:send', (e) => {
-      this._handleSend(e.detail.text, e.detail.image, e.detail.video, e.detail.audio);
+      this._handleSend(e.detail.text, e.detail.image, e.detail.video, e.detail.audio, e.detail.draw);
     });
 
     // Model change
@@ -220,7 +221,7 @@ export class App {
     this._closeMobileSidebar();
   }
 
-  async _handleSend(text, image, video, audio) {
+  async _handleSend(text, image, video, audio, draw) {
     const settings = store.getSettings();
     const trimmedText = text.trim();
 
@@ -264,6 +265,11 @@ export class App {
         instruction: trimmedText,
         audio,
       });
+      return;
+    }
+
+    if (draw && trimmedText) {
+      await this._handleDrawTask({ convId, model, settings, prompt: trimmedText });
       return;
     }
 
@@ -382,6 +388,51 @@ export class App {
         fileName: audio.file?.name || 'audio',
       },
     };
+  }
+
+  async _handleDrawTask({ convId, model, settings, prompt }) {
+    const userMessage = {
+      role: 'user',
+      content: prompt,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.chat.clearError();
+    store.addMessage(convId, userMessage);
+    this._pushSessionMsg(convId, userMessage);
+    this.chat.appendUserMessage(userMessage);
+    this._updateContextInfo();
+
+    const conv = store.getCurrentConversation();
+    if (conv && conv.messages.length === 1) {
+      store.updateConversationTitle(convId, `Draw: ${prompt.slice(0, 35)}`);
+      this.sidebar.update();
+    }
+
+    this.inputBar.setSending(true);
+    this.chat.showTypingIndicator();
+
+    try {
+      const dataUrls = await generateImage(settings.baseUrl, settings.apiKey, model, prompt);
+      const assistantMsg = {
+        role: 'assistant',
+        content: `Generated image for: "${prompt}"`,
+        generatedImages: dataUrls,
+        timestamp: new Date().toISOString(),
+      };
+
+      this.chat.appendGeneratedImageMessage(assistantMsg);
+      // Persist text-only version to localStorage (avoid storing large b64 dataUrls)
+      store.addMessage(convId, { role: 'assistant', content: assistantMsg.content, timestamp: assistantMsg.timestamp });
+      this._pushSessionMsg(convId, assistantMsg);
+      this._updateContextInfo();
+      this.sidebar.update();
+    } catch (err) {
+      this.chat.showError(`Error: ${err.message}`);
+    } finally {
+      this.inputBar.setSending(false);
+      this.inputBar.focus();
+    }
   }
 
   async _handleAudioTask({ convId, model, settings, instruction, audio }) {

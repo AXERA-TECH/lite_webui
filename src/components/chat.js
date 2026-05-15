@@ -145,6 +145,7 @@ export class Chat {
     const text = getTextContent(msg);
     const images = getImageParts(msg);
     const videos = getVideoParts(msg);
+    const genImages = msg.generatedImages || [];
     const time = formatTime(msg.timestamp);
 
     const wrapper = document.createElement('div');
@@ -175,12 +176,37 @@ export class Chat {
       const msgDiv = document.createElement('div');
       msgDiv.className = 'w-full';
 
-      const bubble = document.createElement('div');
-      bubble.className = 'text-[13.5px] prose-dark leading-relaxed';
-      bubble.innerHTML = renderMarkdown(text);
-      attachCopyButtons(bubble);
+      if (genImages.length > 0) {
+        genImages.forEach((src, idx) => {
+          const imgWrapper = document.createElement('div');
+          imgWrapper.className = 'mb-3';
 
-      msgDiv.appendChild(bubble);
+          const imgEl = document.createElement('img');
+          imgEl.src = src;
+          imgEl.alt = 'Generated image';
+          imgEl.className = 'max-w-full rounded-xl border border-[var(--c-bd)] shadow-sm';
+          imgWrapper.appendChild(imgEl);
+
+          const dlRow = document.createElement('div');
+          dlRow.className = 'mt-2';
+
+          const dlLink = document.createElement('a');
+          dlLink.href = src;
+          dlLink.download = `generated-${idx + 1}.png`;
+          dlLink.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors';
+          dlLink.innerHTML = `${icon('download')} Download`;
+
+          dlRow.appendChild(dlLink);
+          imgWrapper.appendChild(dlRow);
+          msgDiv.appendChild(imgWrapper);
+        });
+      } else {
+        const bubble = document.createElement('div');
+        bubble.className = 'text-[13.5px] prose-dark leading-relaxed';
+        bubble.innerHTML = renderMarkdown(text);
+        attachCopyButtons(bubble);
+        msgDiv.appendChild(bubble);
+      }
 
       if (time) {
         const timeEl = document.createElement('div');
@@ -276,6 +302,15 @@ export class Chat {
       content: fullText,
       timestamp: new Date().toISOString(),
     });
+    this._scrollToBottom();
+  }
+
+  appendGeneratedImageMessage(msg) {
+    this.hideTypingIndicator();
+    const container = this.el.querySelector('#chat-messages');
+    this._messages.push(msg);
+    const el = this._buildMessageEl(msg);
+    container.appendChild(el);
     this._scrollToBottom();
   }
 

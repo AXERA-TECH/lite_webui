@@ -180,7 +180,7 @@ export class SettingsModal {
     const allModelIds = new Set(extraModels);
 
     const rows = [...allModelIds].sort().map(modelId => {
-      const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false };
+      const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false, imageGen: false };
       const override = userCaps[modelId] || {};
       const caps = { ...base, ...override };
       return `
@@ -194,6 +194,10 @@ export class SettingsModal {
             <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
               <input type="checkbox" class="cap-check accent-current" data-cap="audio" ${caps.audio ? 'checked' : ''} />
               Audio
+            </label>
+            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
+              <input type="checkbox" class="cap-check accent-current" data-cap="imageGen" ${caps.imageGen ? 'checked' : ''} />
+              Draw
             </label>
           </div>
         </div>
