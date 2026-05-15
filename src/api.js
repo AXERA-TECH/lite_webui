@@ -208,14 +208,39 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
   }
 }
 
+/** Converts a data URL (base64 or plain) to a Blob for FormData uploads. */
+async function dataUrlToBlob(dataUrl) {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+
 export async function generateImage(baseUrl, apiKey, model, prompt, options = {}) {
-  const { size = '512x512', responseFormat = 'url' } = options;
-  const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
-  const res = await fetch(`${urlBase}/v1/images/generations`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ model, prompt, size, response_format: responseFormat }),
-  });
+  const { size = '512x512', responseFormat = 'url', image = null } = options;
+  // image = { dataUrl, file } when doing img2img, null for txt2img
+
+  let endpoint, body, headers;
+  if (image?.dataUrl) {
+    // img2img: POST /v1/images/edits with multipart FormData
+    const { urlBase, headers: h } = buildRequestConfig(baseUrl, apiKey, undefined, { contentType: null });
+    const form = new FormData();
+    const blob = await dataUrlToBlob(image.dataUrl);
+    form.append('image', blob, image.file?.name || 'image.png');
+    form.append('model', model);
+    form.append('prompt', prompt);
+    form.append('size', size);
+    form.append('response_format', responseFormat);
+    endpoint = `${urlBase}/v1/images/edits`;
+    body = form;
+    headers = h;
+  } else {
+    // txt2img: POST /v1/images/generations with JSON
+    const { urlBase, headers: h } = buildRequestConfig(baseUrl, apiKey);
+    endpoint = `${urlBase}/v1/images/generations`;
+    body = JSON.stringify({ model, prompt, size, response_format: responseFormat });
+    headers = h;
+  }
+
+  const res = await fetch(endpoint, { method: 'POST', headers, body });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let errMsg = `Image generation failed (${res.status})`;

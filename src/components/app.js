@@ -269,7 +269,7 @@ export class App {
     }
 
     if (draw && trimmedText) {
-      await this._handleDrawTask({ convId, model, settings, prompt: trimmedText });
+      await this._handleDrawTask({ convId, model, settings, prompt: trimmedText, image });
       return;
     }
 
@@ -390,7 +390,7 @@ export class App {
     };
   }
 
-  async _handleDrawTask({ convId, model, settings, prompt }) {
+  async _handleDrawTask({ convId, model, settings, prompt, image = null }) {
     const userMessage = {
       role: 'user',
       content: prompt,
@@ -413,7 +413,7 @@ export class App {
     this.chat.showTypingIndicator();
 
     try {
-      const dataUrls = await generateImage(settings.baseUrl, settings.apiKey, model, prompt);
+      const dataUrls = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { image });
       if (!dataUrls.length) {
         throw new Error('No images returned — the model may not support image generation');
       }

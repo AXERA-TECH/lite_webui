@@ -212,6 +212,11 @@ export class InputBar {
     const dataUrl = await this._fileToDataUrl(file);
     this._pendingImage = { dataUrl, file };
     this._showImagePreview(dataUrl);
+    // In draw mode, update placeholder to hint at img2img
+    if (this._drawMode) {
+      const textarea = this.el.querySelector('#message-input');
+      if (textarea) textarea.placeholder = 'Describe how to modify the image\u2026';
+    }
   }
 
   async _handleVideoFile(file) {
@@ -231,7 +236,7 @@ export class InputBar {
   _handleMediaFile(file) {
     if (file.type.startsWith('image/')) {
       this._handleImageFile(file);
-    } else if (file.type.startsWith('video/')) {
+    } else if (file.type.startsWith('video/') && !this._drawMode) {
       this._handleVideoFile(file);
     }
   }
@@ -265,6 +270,11 @@ export class InputBar {
     const thumb = this.el.querySelector('#image-preview-thumb');
     thumb.src = '';
     previewArea.classList.add('hidden');
+    // In draw mode, revert placeholder back to txt2img hint
+    if (this._drawMode) {
+      const textarea = this.el.querySelector('#message-input');
+      if (textarea) textarea.placeholder = 'Describe what to draw\u2026';
+    }
   }
 
   _showVideoPreview(dataUrl) {
@@ -304,7 +314,7 @@ export class InputBar {
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         const imageSupported = supportsImage(this._currentModel, store.getModelCapabilities());
-        if (!imageSupported) return;
+        if (!imageSupported && !this._drawMode) return;
         e.preventDefault();
         const file = item.getAsFile();
         if (file) await this._handleImageFile(file);
@@ -312,7 +322,7 @@ export class InputBar {
       }
       if (item.type.startsWith('video/')) {
         const videoSupported = supportsVideo(this._currentModel, store.getModelCapabilities());
-        if (!videoSupported) return;
+        if (!videoSupported || this._drawMode) return;
         e.preventDefault();
         const file = item.getAsFile();
         if (file) await this._handleVideoFile(file);
@@ -358,8 +368,8 @@ export class InputBar {
   _setDrawMode(active) {
     this._drawMode = active;
     if (active) {
-      // Clear pending media when entering draw mode
-      if (this._pendingImage) this._clearImage();
+      // Keep pending image — it can be used as img2img source.
+      // Only clear video and audio (not useful for draw mode).
       if (this._pendingVideo) this._clearVideo();
       if (this._pendingAudio) this._clearAudio();
     }
@@ -377,7 +387,9 @@ export class InputBar {
     }
     const textarea = this.el.querySelector('#message-input');
     if (textarea) {
-      textarea.placeholder = active ? 'Describe what to draw\u2026' : 'Type a message\u2026';
+      textarea.placeholder = active
+        ? (this._pendingImage ? 'Describe how to modify the image\u2026' : 'Describe what to draw\u2026')
+        : 'Type a message\u2026';
       textarea.focus();
     }
     const drawBtn = this.el.querySelector('#draw-mode-btn');
@@ -386,6 +398,8 @@ export class InputBar {
         ? 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-violet-500 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/30'
         : 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
     }
+    // Refresh media button (accept & enabled state changes with draw mode)
+    this._updateAttachmentButtons();
   }
 
   setSending(sending) {
@@ -434,13 +448,20 @@ export class InputBar {
     const imageGenSupported = supportsImageGen(this._currentModel, store.getModelCapabilities());
     const mediaSupported = imageSupported || videoSupported;
 
-    if (mediaSupported) {
+    // In draw mode, always allow image attachment (for img2img), even if model lacks vision.
+    const canAttachMedia = this._drawMode ? true : mediaSupported;
+    if (canAttachMedia) {
       mediaBtn.disabled = false;
       mediaBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
-      const labels = [imageSupported && 'image', videoSupported && 'video'].filter(Boolean).join(' / ');
-      mediaBtn.title = `Attach ${labels} (or paste)`;
-      if (fileInput) {
-        fileInput.accept = [imageSupported && 'image/*', videoSupported && 'video/*'].filter(Boolean).join(',');
+      if (this._drawMode) {
+        mediaBtn.title = 'Attach reference image for img2img (or paste)';
+        if (fileInput) fileInput.accept = 'image/*';
+      } else {
+        const labels = [imageSupported && 'image', videoSupported && 'video'].filter(Boolean).join(' / ');
+        mediaBtn.title = `Attach ${labels} (or paste)`;
+        if (fileInput) {
+          fileInput.accept = [imageSupported && 'image/*', videoSupported && 'video/*'].filter(Boolean).join(',');
+        }
       }
     } else {
       mediaBtn.disabled = true;
