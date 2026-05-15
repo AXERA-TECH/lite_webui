@@ -209,12 +209,12 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
 }
 
 export async function generateImage(baseUrl, apiKey, model, prompt, options = {}) {
-  const { n = 1, size = '1024x1024', responseFormat = 'b64_json' } = options;
+  const { size = '512x512', responseFormat = 'url' } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
   const res = await fetch(`${urlBase}/v1/images/generations`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model, prompt, n, size, response_format: responseFormat }),
+    body: JSON.stringify({ model, prompt, size, response_format: responseFormat }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -229,9 +229,13 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
   }
   const json = await res.json();
   const items = json.data || [];
+  const cleanBase = String(baseUrl || '').replace(/\/+$/, '');
   return items.map(item => {
     if (item.b64_json) return `data:image/png;base64,${item.b64_json}`;
-    return item.url || null;
+    const url = item.url || null;
+    if (!url) return null;
+    // If the backend returns a relative URL, prepend the base URL.
+    return url.startsWith('http') ? url : `${cleanBase}${url.startsWith('/') ? '' : '/'}${url}`;
   }).filter(Boolean);
 }
 

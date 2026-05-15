@@ -19,7 +19,7 @@ const UNKNOWN_DEFAULT = { text: true, image: false, audio: false, imageGen: fals
 // Heuristic: detect image-generation models by id pattern when not in DEFAULT_CAPABILITIES.
 function looksLikeImageGenModel(modelId) {
   const id = String(modelId || '').toLowerCase();
-  return /dall[- ]?e|flux|stable[- ]?diffusion|sdxl|imagen|wanx|cogview|playground|midjourney|ideogram/.test(id);
+  return /dall[- ]?e|flux|stable[- ]?diffusion|stable[- ]?cascade|sdxl|sd[_-]?turbo|dreamshaper|dreamlike|realisticvision|imagen|wanx|cogview|playground|midjourney|ideogram|kolors/.test(id);
 }
 
 export function getCapabilities(modelId, userOverrides = {}) {
