@@ -347,7 +347,11 @@ export class Chat {
           this._streamingThinkEl.dataset.state = 'done';
           if (label) label.textContent = 'Thought';
         }
-        if (body) body.textContent = thinkText;
+        if (body) {
+          body.textContent = thinkText;
+          // Auto-scroll the think body to keep latest content visible
+          body.scrollTop = body.scrollHeight;
+        }
       }
     }
 
