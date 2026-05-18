@@ -22,6 +22,7 @@ export class App {
     this.modelPicker = new ModelPicker();
     this.settingsModal = new SettingsModal();
     this._sidebarOpen = false;
+    this._abortController = null;
     // In-memory message cache keyed by convId.  Persists for the page session so
     // that media (video/image dataUrls) remains visible even after an auto-reset
     // clears localStorage, or when localStorage quota prevents persistence.
@@ -154,6 +155,12 @@ export class App {
     // Send message
     document.addEventListener('inputbar:send', (e) => {
       this._handleSend(e.detail.text, e.detail.image, e.detail.video, e.detail.audio, e.detail.draw, e.detail.seed ?? null);
+    });
+
+    // Stop generation
+    document.addEventListener('inputbar:stop', () => {
+      this._abortController?.abort();
+      this._abortController = null;
     });
 
     // Model change
@@ -319,11 +326,13 @@ export class App {
     // and formatMessagesForApi can correctly identify it as the latest message.
     const apiMessages = formatMessagesForApi([...(preConv?.messages || []), userMessage]);
 
-    try {
-      let started = false;
-      let fullText = '';
+    this._abortController = new AbortController();
+    const { signal } = this._abortController;
 
-      for await (const chunk of streamCompletion(settings.baseUrl, settings.apiKey, model, apiMessages)) {
+    let started = false;
+    let fullText = '';
+    try {
+      for await (const chunk of streamCompletion(settings.baseUrl, settings.apiKey, model, apiMessages, { signal })) {
         if (!started) {
           this.chat.startAssistantMessage();
           started = true;
@@ -346,8 +355,26 @@ export class App {
       this._updateContextInfo();
       this.sidebar.update();
     } catch (err) {
-      this.chat.showError(`Error: ${err.message}`);
+      if (err.name === 'AbortError') {
+        // User stopped — finalize whatever was received so far.
+        if (!started) this.chat.startAssistantMessage();
+        this.chat.finalizeAssistantMessage(fullText);
+        if (fullText) {
+          const assistantMsg = {
+            role: 'assistant',
+            content: fullText,
+            timestamp: new Date().toISOString(),
+          };
+          store.addMessage(convId, assistantMsg);
+          this._pushSessionMsg(convId, assistantMsg);
+          this._updateContextInfo();
+          this.sidebar.update();
+        }
+      } else {
+        this.chat.showError(`Error: ${err.message}`);
+      }
     } finally {
+      this._abortController = null;
       this.inputBar.setSending(false);
       this.inputBar.focus();
     }
@@ -420,8 +447,11 @@ export class App {
     this.inputBar.setSending(true);
     this.chat.showTypingIndicator();
 
+    this._abortController = new AbortController();
+    const { signal } = this._abortController;
+
     try {
-      const result = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { image, seed });
+      const result = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { image, seed, signal });
       if (!result.images.length) {
         throw new Error('No images returned — the model may not support image generation');
       }
@@ -448,8 +478,9 @@ export class App {
       this._updateContextInfo();
       this.sidebar.update();
     } catch (err) {
-      this.chat.showError(`Error: ${err.message}`);
+      if (err.name !== 'AbortError') this.chat.showError(`Error: ${err.message}`);
     } finally {
+      this._abortController = null;
       this.inputBar.setSending(false);
       this.inputBar.focus();
     }
@@ -472,8 +503,12 @@ export class App {
     this.inputBar.setSending(true);
     this.chat.showTypingIndicator();
 
+    this._abortController = new AbortController();
+    const { signal } = this._abortController;
+
+    let fullText = '';
     try {
-      const transcript = await transcribeAudio(settings.baseUrl, settings.apiKey, model, audio.file);
+      const transcript = await transcribeAudio(settings.baseUrl, settings.apiKey, model, audio.file, { signal });
 
       if (!instruction) {
         this.chat.hideTypingIndicator();
@@ -512,8 +547,7 @@ export class App {
       this.chat.showSystemMessage('Audio transcribed — applying instruction');
       this.chat.startAssistantMessage();
 
-      let fullText = '';
-      for await (const chunk of streamCompletion(settings.baseUrl, settings.apiKey, model, apiMessages)) {
+      for await (const chunk of streamCompletion(settings.baseUrl, settings.apiKey, model, apiMessages, { signal })) {
         fullText += chunk;
         this.chat.appendToAssistantMessage(chunk);
       }
@@ -529,8 +563,25 @@ export class App {
       this._updateContextInfo();
       this.sidebar.update();
     } catch (err) {
-      this.chat.showError(`Error: ${err.message}`);
+      if (err.name === 'AbortError') {
+        // Finalize partial text if any was received
+        this.chat.finalizeAssistantMessage(fullText);
+        if (fullText) {
+          const assistantMsg = {
+            role: 'assistant',
+            content: fullText,
+            timestamp: new Date().toISOString(),
+          };
+          store.addMessage(convId, assistantMsg);
+          this._pushSessionMsg(convId, assistantMsg);
+          this._updateContextInfo();
+          this.sidebar.update();
+        }
+      } else {
+        this.chat.showError(`Error: ${err.message}`);
+      }
     } finally {
+      this._abortController = null;
       this.inputBar.setSending(false);
       this.inputBar.focus();
     }

@@ -43,18 +43,17 @@ describe('InputBar – send button appearance', () => {
     expect(btn.querySelector('linearGradient')).not.toBeNull();
   });
 
-  it('setSending(true) disables the button', () => {
+  it('setSending(true) keeps the button enabled (it becomes a stop button)', () => {
     const bar = makeBar();
     bar.setSending(true);
-    expect(bar.el.querySelector('#send-btn').disabled).toBe(true);
+    expect(bar.el.querySelector('#send-btn').disabled).toBe(false);
   });
 
-  it('setSending(true) switches to the muted theme state', () => {
+  it('setSending(true) switches to the stop/rose theme state', () => {
     const bar = makeBar();
     bar.setSending(true);
     const btn = bar.el.querySelector('#send-btn');
-    expect(btn.className).toContain('text-[var(--c-tx3)]');
-    expect(btn.className).toContain('cursor-not-allowed');
+    expect(btn.className).toContain('text-rose-');
     expect(btn.querySelector('linearGradient')).toBeNull();
   });
 

@@ -54,7 +54,7 @@ function extractAudioText(payload) {
 }
 
 async function submitAudioTextRequest(baseUrl, apiKey, model, file, endpoint, options = {}) {
-  const { prompt = '', language = '' } = options;
+  const { prompt = '', language = '', signal } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey, import.meta.env.DEV, { contentType: null });
   const url = `${urlBase}${endpoint}`;
   const body = new FormData();
@@ -69,6 +69,7 @@ async function submitAudioTextRequest(baseUrl, apiKey, model, file, endpoint, op
     method: 'POST',
     headers,
     body,
+    signal,
   });
 
   if (!res.ok) {
@@ -142,13 +143,14 @@ export function formatCompactTokenCount(tokens) {
 }
 
 export async function* streamCompletion(baseUrl, apiKey, model, messages, options = {}) {
-  const { onUsage } = options;
+  const { onUsage, signal } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
   const url = `${urlBase}/v1/chat/completions`;
   const res = await fetch(url, {
     method: 'POST',
     headers,
     body: JSON.stringify({ model, messages, stream: true }),
+    signal,
   });
 
   if (!res.ok) {
@@ -215,7 +217,7 @@ async function dataUrlToBlob(dataUrl) {
 }
 
 export async function generateImage(baseUrl, apiKey, model, prompt, options = {}) {
-  const { size = '512x512', responseFormat = 'url', image = null, seed = null } = options;
+  const { size = '512x512', responseFormat = 'url', image = null, seed = null, signal } = options;
   // image = { dataUrl, file } when doing img2img, null for txt2img
   // Normalize seed: must be a finite integer; null / empty / NaN → omit from request.
   const seedInt = (seed !== null && seed !== '' && Number.isFinite(Number(seed)))
@@ -247,7 +249,7 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
     headers = h;
   }
 
-  const res = await fetch(endpoint, { method: 'POST', headers, body });
+  const res = await fetch(endpoint, { method: 'POST', headers, body, signal });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     let errMsg = `Image generation failed (${res.status})`;

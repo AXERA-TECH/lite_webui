@@ -171,7 +171,13 @@ export class InputBar {
       }
     });
 
-    sendBtn.addEventListener('click', () => this._submit());
+    sendBtn.addEventListener('click', () => {
+      if (this._sending) {
+        document.dispatchEvent(new CustomEvent('inputbar:stop'));
+      } else {
+        this._submit();
+      }
+    });
 
     drawBtn?.addEventListener('click', () => {
       if (!drawBtn.disabled) this._toggleDrawMode();
@@ -451,11 +457,13 @@ export class InputBar {
     const sendBtn = this.el.querySelector('#send-btn');
     const textarea = this.el.querySelector('#message-input');
     if (sendBtn) {
-      sendBtn.disabled = sending;
+      // Button stays enabled in both states — when sending it becomes a stop button.
+      sendBtn.disabled = false;
       sendBtn.className = sending
-        ? 'flex items-center justify-center w-8 h-8 rounded-xl text-[var(--c-tx3)] cursor-not-allowed transition-all'
+        ? 'flex items-center justify-center w-8 h-8 rounded-xl transition-all text-rose-500 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/30'
         : 'flex items-center justify-center w-8 h-8 rounded-xl transition-all hover:bg-[var(--c-hi)]';
-      sendBtn.innerHTML = icon(sending ? 'sendMuted' : 'send');
+      sendBtn.title = sending ? 'Stop generation' : 'Send (Enter) · Shift+Enter for new line';
+      sendBtn.innerHTML = icon(sending ? 'stop' : 'send');
     }
     if (textarea) textarea.disabled = sending;
   }
