@@ -11,7 +11,7 @@ const KEYS = {
 const DEFAULT_SETTINGS = {
   apiKey: '',
   baseUrl: 'http://127.0.0.1:8000',
-  theme: 'dark',
+  theme: 'light',
   contextLimitTokens: 4096,
   contextResetThresholdPercent: 85,
 };
