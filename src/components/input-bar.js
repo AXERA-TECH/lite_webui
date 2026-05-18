@@ -120,11 +120,17 @@ export class InputBar {
             </div>
             <div id="seed-wrapper" class="${this._drawMode ? 'flex' : 'hidden'} items-center gap-1.5 shrink-0">
               <span class="text-[11px] text-[var(--c-tx3)] select-none">seed</span>
-              <input id="seed-input" type="number" min="0" step="1" placeholder="random"
-                class="w-[72px] text-[11px] font-mono text-[var(--c-tx2)] bg-[var(--c-hi)] border border-[var(--c-bd)] rounded-md px-2 py-0.5 placeholder-[var(--c-txph)] focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 transition-colors"
+              <input id="seed-input" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="random"
+                class="w-[80px] text-[11px] font-mono text-[var(--c-tx2)] bg-[var(--c-hi)] border border-[var(--c-bd)] rounded-md px-2 py-0.5 placeholder-[var(--c-txph)] focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 transition-colors"
                 aria-label="Generation seed (optional, leave blank for random)"
                 title="Seed for reproducible generation — leave blank for random"
               />
+              <button id="seed-reroll-btn" type="button"
+                class="flex items-center justify-center w-6 h-6 rounded-md text-[var(--c-tx3)] hover:text-violet-500 dark:hover:text-violet-400 hover:bg-[var(--c-hi)] transition-colors"
+                aria-label="Randomize seed"
+                title="Randomize seed">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
+              </button>
             </div>
             <span id="context-info"
               class="ml-auto text-right text-[11px] font-mono tabular-nums text-[var(--c-tx3)] transition-colors select-none"
@@ -169,6 +175,13 @@ export class InputBar {
 
     drawBtn?.addEventListener('click', () => {
       if (!drawBtn.disabled) this._toggleDrawMode();
+    });
+
+    // Seed re-roll button
+    const seedRerollBtn = this.el.querySelector('#seed-reroll-btn');
+    seedRerollBtn?.addEventListener('click', () => {
+      const seedInput = this.el.querySelector('#seed-input');
+      if (seedInput) seedInput.value = String(Math.floor(Math.random() * 1_000_000_000));
     });
 
     // Media (image/video) upload
@@ -413,15 +426,19 @@ export class InputBar {
     }
     // Show/hide seed input
     const seedWrapper = this.el.querySelector('#seed-wrapper');
+    const seedInput = this.el.querySelector('#seed-input');
     if (seedWrapper) {
       if (active) {
         seedWrapper.classList.remove('hidden');
         seedWrapper.classList.add('flex');
+        // Pre-fill a random seed so every generation is reproducible by default.
+        // User can clear the field to get a truly random (un-seeded) result.
+        if (seedInput && !seedInput.value) {
+          seedInput.value = String(Math.floor(Math.random() * 1_000_000_000));
+        }
       } else {
         seedWrapper.classList.add('hidden');
         seedWrapper.classList.remove('flex');
-        // Clear seed value when leaving draw mode
-        const seedInput = this.el.querySelector('#seed-input');
         if (seedInput) seedInput.value = '';
       }
     }
