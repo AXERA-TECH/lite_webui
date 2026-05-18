@@ -10,8 +10,8 @@ describe('store – default settings', () => {
     expect(store.getSettings().baseUrl).toBe('http://127.0.0.1:8000');
   });
 
-  it('default theme is dark', () => {
-    expect(store.getSettings().theme).toBe('dark');
+  it('default theme is light', () => {
+    expect(store.getSettings().theme).toBe('light');
   });
 
   it('default contextLimitTokens is 4096', () => {
