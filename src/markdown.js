@@ -1,4 +1,6 @@
 import { marked } from 'marked';
+import markedKatex from 'marked-katex-extension';
+import 'katex/dist/katex.min.css';
 import hljs from 'highlight.js/lib/core';
 
 // Register common languages only to keep bundle size small
@@ -96,6 +98,9 @@ marked.setOptions({
   gfm: true,
   breaks: true,
 });
+
+// Enable KaTeX math rendering: $...$ for inline, $$...$$ for block.
+marked.use(markedKatex({ throwOnError: false, output: 'html' }));
 
 export function renderMarkdown(text) {
   if (!text) return '';
