@@ -118,6 +118,14 @@ export class InputBar {
                 ${icon('wand')}
               </button>
             </div>
+            <div id="seed-wrapper" class="${this._drawMode ? 'flex' : 'hidden'} items-center gap-1.5 shrink-0">
+              <span class="text-[11px] text-[var(--c-tx3)] select-none">seed</span>
+              <input id="seed-input" type="number" min="0" step="1" placeholder="random"
+                class="w-[72px] text-[11px] font-mono text-[var(--c-tx2)] bg-[var(--c-hi)] border border-[var(--c-bd)] rounded-md px-2 py-0.5 placeholder-[var(--c-txph)] focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 transition-colors"
+                aria-label="Generation seed (optional, leave blank for random)"
+                title="Seed for reproducible generation — leave blank for random"
+              />
+            </div>
             <span id="context-info"
               class="ml-auto text-right text-[11px] font-mono tabular-nums text-[var(--c-tx3)] transition-colors select-none"
               title="Estimated context tokens / configured window">ctx 0</span>
@@ -349,6 +357,11 @@ export class InputBar {
     const video = this._pendingVideo;
     const audio = this._pendingAudio;
     const draw = this._drawMode;
+    // Capture seed before clearing draw mode (which resets the seed input)
+    const seedEl = this.el.querySelector('#seed-input');
+    const seedRaw = seedEl?.value?.trim() ?? '';
+    const seed = (seedRaw !== '' && !isNaN(Number(seedRaw))) ? Math.floor(Number(seedRaw)) : null;
+
     this._clearImage();
     this._clearVideo();
     this._clearAudio();
@@ -357,7 +370,7 @@ export class InputBar {
     this._autoResize(textarea);
 
     document.dispatchEvent(new CustomEvent('inputbar:send', {
-      detail: { text, image, video, audio, draw },
+      detail: { text, image, video, audio, draw, seed },
     }));
   }
 
@@ -397,6 +410,20 @@ export class InputBar {
       drawBtn.className = active
         ? 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-violet-500 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/30'
         : 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
+    }
+    // Show/hide seed input
+    const seedWrapper = this.el.querySelector('#seed-wrapper');
+    if (seedWrapper) {
+      if (active) {
+        seedWrapper.classList.remove('hidden');
+        seedWrapper.classList.add('flex');
+      } else {
+        seedWrapper.classList.add('hidden');
+        seedWrapper.classList.remove('flex');
+        // Clear seed value when leaving draw mode
+        const seedInput = this.el.querySelector('#seed-input');
+        if (seedInput) seedInput.value = '';
+      }
     }
     // Refresh media button (accept & enabled state changes with draw mode)
     this._updateAttachmentButtons();

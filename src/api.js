@@ -215,8 +215,11 @@ async function dataUrlToBlob(dataUrl) {
 }
 
 export async function generateImage(baseUrl, apiKey, model, prompt, options = {}) {
-  const { size = '512x512', responseFormat = 'url', image = null } = options;
+  const { size = '512x512', responseFormat = 'url', image = null, seed = null } = options;
   // image = { dataUrl, file } when doing img2img, null for txt2img
+  // Normalize seed: must be a finite integer; null / empty / NaN → omit from request.
+  const seedInt = (seed !== null && seed !== '' && Number.isFinite(Number(seed)))
+    ? Math.floor(Number(seed)) : null;
 
   let endpoint, body, headers;
   if (image?.dataUrl) {
@@ -229,6 +232,7 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
     form.append('prompt', prompt);
     form.append('size', size);
     form.append('response_format', responseFormat);
+    if (seedInt !== null) form.append('seed', String(seedInt));
     endpoint = `${urlBase}/v1/images/edits`;
     body = form;
     headers = h;
@@ -236,7 +240,10 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
     // txt2img: POST /v1/images/generations with JSON
     const { urlBase, headers: h } = buildRequestConfig(baseUrl, apiKey);
     endpoint = `${urlBase}/v1/images/generations`;
-    body = JSON.stringify({ model, prompt, size, response_format: responseFormat });
+    body = JSON.stringify({
+      model, prompt, size, response_format: responseFormat,
+      ...(seedInt !== null ? { seed: seedInt } : {}),
+    });
     headers = h;
   }
 
@@ -255,13 +262,17 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
   const json = await res.json();
   const items = json.data || [];
   const cleanBase = String(baseUrl || '').replace(/\/+$/, '');
-  return items.map(item => {
+  const images = items.map(item => {
     if (item.b64_json) return `data:image/png;base64,${item.b64_json}`;
     const url = item.url || null;
     if (!url) return null;
     // If the backend returns a relative URL, prepend the base URL.
     return url.startsWith('http') ? url : `${cleanBase}${url.startsWith('/') ? '' : '/'}${url}`;
   }).filter(Boolean);
+  // Read seed from response (backend may echo it back); fall back to what we sent.
+  const responseSeed = items[0]?.seed ?? null;
+  const effectiveSeed = responseSeed !== null ? responseSeed : seedInt;
+  return { images, seed: effectiveSeed };
 }
 
 export function formatMessagesForApi(messages) {

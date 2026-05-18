@@ -153,7 +153,7 @@ export class App {
 
     // Send message
     document.addEventListener('inputbar:send', (e) => {
-      this._handleSend(e.detail.text, e.detail.image, e.detail.video, e.detail.audio, e.detail.draw);
+      this._handleSend(e.detail.text, e.detail.image, e.detail.video, e.detail.audio, e.detail.draw, e.detail.seed ?? null);
     });
 
     // Model change
@@ -221,7 +221,7 @@ export class App {
     this._closeMobileSidebar();
   }
 
-  async _handleSend(text, image, video, audio, draw) {
+  async _handleSend(text, image, video, audio, draw, seed = null) {
     const settings = store.getSettings();
     const trimmedText = text.trim();
 
@@ -269,7 +269,7 @@ export class App {
     }
 
     if (draw && trimmedText) {
-      await this._handleDrawTask({ convId, model, settings, prompt: trimmedText, image });
+      await this._handleDrawTask({ convId, model, settings, prompt: trimmedText, image, seed });
       return;
     }
 
@@ -390,7 +390,7 @@ export class App {
     };
   }
 
-  async _handleDrawTask({ convId, model, settings, prompt, image = null }) {
+  async _handleDrawTask({ convId, model, settings, prompt, image = null, seed = null }) {
     const ts = new Date().toISOString();
     // Full message (with source image for img2img) kept in-memory only — never in localStorage.
     const userMessage = {
@@ -421,26 +421,28 @@ export class App {
     this.chat.showTypingIndicator();
 
     try {
-      const dataUrls = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { image });
-      if (!dataUrls.length) {
+      const result = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { image, seed });
+      if (!result.images.length) {
         throw new Error('No images returned — the model may not support image generation');
       }
       const assistantMsg = {
         role: 'assistant',
         content: `Generated image for: "${prompt}"`,
-        generatedImages: dataUrls,
+        generatedImages: result.images,
+        ...(result.seed !== null ? { generatedSeed: result.seed } : {}),
         timestamp: new Date().toISOString(),
       };
 
       this.chat.appendGeneratedImageMessage(assistantMsg);
       // Persist to localStorage. URL-based images are small and safe to store;
       // base64 data URLs are excluded to avoid exceeding localStorage quota.
-      const persistedImages = dataUrls.filter(u => u.startsWith('http'));
+      const persistedImages = result.images.filter(u => u.startsWith('http'));
       store.addMessage(convId, {
         role: 'assistant',
         content: assistantMsg.content,
         timestamp: assistantMsg.timestamp,
         ...(persistedImages.length ? { generatedImages: persistedImages } : {}),
+        ...(assistantMsg.generatedSeed !== undefined ? { generatedSeed: assistantMsg.generatedSeed } : {}),
       });
       this._pushSessionMsg(convId, assistantMsg);
       this._updateContextInfo();

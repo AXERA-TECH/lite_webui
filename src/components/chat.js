@@ -188,7 +188,19 @@ export class Chat {
           imgWrapper.appendChild(imgEl);
 
           const dlRow = document.createElement('div');
-          dlRow.className = 'mt-2';
+          dlRow.className = 'mt-2 flex items-center gap-2';
+
+          if (msg.generatedSeed != null) {
+            const seedBadge = document.createElement('span');
+            seedBadge.className = 'inline-flex items-center gap-1 text-[11px] font-mono text-[var(--c-tx3)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1 select-all';
+            seedBadge.title = 'Seed used for generation — click to copy';
+            seedBadge.textContent = `seed: ${msg.generatedSeed}`;
+            seedBadge.style.cursor = 'pointer';
+            seedBadge.addEventListener('click', () => {
+              navigator.clipboard?.writeText(String(msg.generatedSeed)).catch(() => {});
+            });
+            dlRow.appendChild(seedBadge);
+          }
 
           const dlLink = document.createElement('a');
           dlLink.href = src;
