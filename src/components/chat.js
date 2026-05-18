@@ -322,9 +322,9 @@ export class Chat {
 
     const { thinkText, mainText, inThink } = parseThinkStream(this._streamingText);
 
-    // Create or update the think streaming block
-    if (thinkText || inThink) {
-      if (!this._streamingThinkEl) {
+    // Create or update the think streaming block (skip if think text is only whitespace)
+    if (thinkText.trim() || inThink) {
+      if (!this._streamingThinkEl && thinkText.trim()) {
         const thinkEl = document.createElement('div');
         thinkEl.className = 'think-streaming';
         thinkEl.dataset.state = 'active';

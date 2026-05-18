@@ -131,11 +131,13 @@ export function parseThinkStream(text) {
   const thinkContent = afterOpen.slice(0, closeIdx);
   // Trim leading newline/space from the text that follows </think>
   const afterClose = afterOpen.slice(closeIdx + 8).replace(/^\s+/, ''); // '</think>'.length === 8
+  const trimmedThink = thinkContent.trim();
   return {
-    thinkText: thinkContent.trim(),
+    // Empty/whitespace-only <think> blocks are treated as non-existent
+    thinkText: trimmedThink,
     mainText: (beforeThink + afterClose).trim(),
     inThink: false,
-    thinkComplete: true,
+    thinkComplete: trimmedThink.length > 0,
   };
 }
 
