@@ -1,4 +1,4 @@
-import { renderMarkdown, attachCopyButtons } from '../markdown.js';
+import { renderMarkdown, attachCopyButtons, parseThinkStream } from '../markdown.js';
 import { icon } from '../icons.js';
 
 const MAX_VISIBLE = 50;
@@ -213,11 +213,7 @@ export class Chat {
           msgDiv.appendChild(imgWrapper);
         });
       } else {
-        const bubble = document.createElement('div');
-        bubble.className = 'text-[13.5px] prose-dark leading-relaxed';
-        bubble.innerHTML = renderMarkdown(text);
-        attachCopyButtons(bubble);
-        msgDiv.appendChild(bubble);
+        this._renderAssistantBubble(text, msgDiv);
       }
 
       if (time) {
@@ -231,6 +227,30 @@ export class Chat {
     }
 
     return wrapper;
+  }
+
+  // Renders an assistant text message into `container`, handling <think> blocks.
+  _renderAssistantBubble(text, container) {
+    const { thinkText, mainText } = parseThinkStream(text);
+    if (thinkText) {
+      const details = document.createElement('details');
+      details.className = 'think-block';
+      details.innerHTML = `
+        <summary>
+          ${icon('sparkle')}
+          <span>Thinking</span>
+          <span class="think-chevron">${icon('chevronDown')}</span>
+        </summary>
+        <div class="think-block-content">${renderMarkdown(thinkText)}</div>
+      `;
+      attachCopyButtons(details);
+      container.appendChild(details);
+    }
+    const bubble = document.createElement('div');
+    bubble.className = 'text-[13.5px] prose-dark leading-relaxed';
+    bubble.innerHTML = renderMarkdown(thinkText ? mainText : text);
+    attachCopyButtons(bubble);
+    container.appendChild(bubble);
   }
 
   appendUserMessage(message) {
@@ -291,6 +311,7 @@ export class Chat {
     container.appendChild(wrapper);
     this._scrollToBottom();
     this._streamingEl = bubble;
+    this._streamingThinkEl = null;
     this._streamingText = '';
     return bubble;
   }
@@ -298,14 +319,73 @@ export class Chat {
   appendToAssistantMessage(chunk) {
     if (!this._streamingEl) return;
     this._streamingText = (this._streamingText || '') + chunk;
-    // Re-render markdown during streaming for better UX
-    this._streamingEl.innerHTML = renderMarkdown(this._streamingText) + '<span class="streaming-cursor opacity-60 animate-pulse">▋</span>';
+
+    const { thinkText, mainText, inThink } = parseThinkStream(this._streamingText);
+
+    // Create or update the think streaming block
+    if (thinkText || inThink) {
+      if (!this._streamingThinkEl) {
+        const thinkEl = document.createElement('div');
+        thinkEl.className = 'think-streaming';
+        thinkEl.dataset.state = 'active';
+        thinkEl.innerHTML = `
+          <div class="think-streaming-header">
+            <span class="think-streaming-icon">${icon('sparkle')}</span>
+            <span class="think-streaming-label">Thinking…</span>
+          </div>
+          <div class="think-streaming-body"></div>
+        `;
+        this._streamingEl.parentNode.insertBefore(thinkEl, this._streamingEl);
+        this._streamingThinkEl = thinkEl;
+      }
+      const label = this._streamingThinkEl.querySelector('.think-streaming-label');
+      const body = this._streamingThinkEl.querySelector('.think-streaming-body');
+      if (!inThink) {
+        // Think block is complete; stop animation
+        this._streamingThinkEl.dataset.state = 'done';
+        if (label) label.textContent = 'Thought';
+      }
+      if (body) body.textContent = thinkText;
+    }
+
+    const cursor = '<span class="streaming-cursor opacity-60 animate-pulse">▋</span>';
+    this._streamingEl.innerHTML = mainText
+      ? renderMarkdown(mainText) + cursor
+      : cursor;
+
     this._scrollToBottom();
   }
 
   finalizeAssistantMessage(fullText) {
     if (!this._streamingEl) return;
-    this._streamingEl.innerHTML = renderMarkdown(fullText);
+
+    const msgDiv = this._streamingEl.parentNode;
+    const { thinkText, mainText } = parseThinkStream(fullText);
+
+    // Remove streaming think block
+    if (this._streamingThinkEl) {
+      this._streamingThinkEl.remove();
+      this._streamingThinkEl = null;
+    }
+
+    // Insert collapsed think <details> if we have thinking content
+    if (thinkText) {
+      const details = document.createElement('details');
+      details.className = 'think-block';
+      details.innerHTML = `
+        <summary>
+          ${icon('sparkle')}
+          <span>Thinking</span>
+          <span class="think-chevron">${icon('chevronDown')}</span>
+        </summary>
+        <div class="think-block-content">${renderMarkdown(thinkText)}</div>
+      `;
+      attachCopyButtons(details);
+      msgDiv.insertBefore(details, this._streamingEl);
+    }
+
+    const renderedText = thinkText ? mainText : fullText;
+    this._streamingEl.innerHTML = renderMarkdown(renderedText);
     attachCopyButtons(this._streamingEl);
     this._streamingEl = null;
     this._streamingText = '';
@@ -330,6 +410,10 @@ export class Chat {
     const container = this.el.querySelector('#chat-messages');
     this.hideTypingIndicator();
     if (this._streamingEl) {
+      if (this._streamingThinkEl) {
+        this._streamingThinkEl.remove();
+        this._streamingThinkEl = null;
+      }
       this._streamingEl.innerHTML = `<span class="text-red-600 dark:text-red-400">${escapeHtml(message)}</span>`;
       this._streamingEl = null;
       this._streamingText = '';

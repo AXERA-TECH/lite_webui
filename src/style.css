@@ -308,3 +308,124 @@ textarea {
 .hljs {
   background: transparent !important;
 }
+
+/* ── Think / reasoning block ── */
+
+/* Streaming state — visible and open while model is thinking */
+.think-streaming {
+  background: rgba(139, 92, 246, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  margin-bottom: 10px;
+}
+.dark .think-streaming {
+  background: rgba(139, 92, 246, 0.07);
+  border-color: rgba(139, 92, 246, 0.22);
+}
+.think-streaming-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(139, 92, 246, 0.8);
+  margin-bottom: 6px;
+}
+.dark .think-streaming-header {
+  color: rgba(196, 181, 253, 0.75);
+}
+.think-streaming-icon { flex-shrink: 0; }
+.think-streaming[data-state="active"] .think-streaming-icon {
+  animation: thinkPulse 1.5s ease-in-out infinite;
+}
+@keyframes thinkPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+.think-streaming-body {
+  font-size: 11.5px;
+  color: var(--c-tx3);
+  max-height: 110px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.65;
+}
+
+/* Finalized state — collapsed <details> */
+.think-block {
+  background: rgba(139, 92, 246, 0.04);
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.dark .think-block {
+  background: rgba(139, 92, 246, 0.07);
+  border-color: rgba(139, 92, 246, 0.22);
+}
+.think-block > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(139, 92, 246, 0.8);
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.dark .think-block > summary {
+  color: rgba(196, 181, 253, 0.75);
+}
+.think-block > summary::-webkit-details-marker { display: none; }
+.think-block > summary::marker { display: none; }
+.think-block > summary:hover {
+  background: rgba(139, 92, 246, 0.07);
+}
+.think-chevron {
+  margin-left: auto;
+  opacity: 0.55;
+  transition: transform 0.2s ease;
+}
+.think-block[open] .think-chevron {
+  transform: rotate(180deg);
+}
+.think-block-content {
+  padding: 4px 12px 10px;
+  border-top: 1px solid rgba(139, 92, 246, 0.12);
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--c-tx3);
+  max-height: 300px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+/* Basic markdown formatting inside think block */
+.think-block-content p               { margin: 0.4em 0; }
+.think-block-content p:first-child   { margin-top: 0; }
+.think-block-content p:last-child    { margin-bottom: 0; }
+.think-block-content ul,
+.think-block-content ol              { padding-left: 1.4em; margin: 0.4em 0; }
+.think-block-content li              { margin: 0.15em 0; }
+.think-block-content code:not(pre code) {
+  background: var(--c-code);
+  border: 1px solid var(--c-bd);
+  border-radius: 3px;
+  padding: 0.1em 0.3em;
+  font-size: 0.82em;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+.think-block-content pre {
+  background: var(--c-code);
+  border: 1px solid var(--c-bd);
+  border-radius: 5px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+  margin: 0.4em 0;
+  font-size: 0.82em;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}

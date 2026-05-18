@@ -111,6 +111,34 @@ export function renderMarkdown(text) {
   }
 }
 
+/**
+ * Splits text into think block content and main content.
+ * Handles the streaming case where </think> may not have arrived yet.
+ */
+export function parseThinkStream(text) {
+  if (!text) return { thinkText: '', mainText: '', inThink: false, thinkComplete: false };
+  const openIdx = text.indexOf('<think>');
+  if (openIdx === -1) {
+    return { thinkText: '', mainText: text, inThink: false, thinkComplete: false };
+  }
+  const beforeThink = text.slice(0, openIdx);
+  const afterOpen = text.slice(openIdx + 7); // '<think>'.length === 7
+  const closeIdx = afterOpen.indexOf('</think>');
+  if (closeIdx === -1) {
+    // Still streaming inside <think>
+    return { thinkText: afterOpen, mainText: beforeThink, inThink: true, thinkComplete: false };
+  }
+  const thinkContent = afterOpen.slice(0, closeIdx);
+  // Trim leading newline/space from the text that follows </think>
+  const afterClose = afterOpen.slice(closeIdx + 8).replace(/^\s+/, ''); // '</think>'.length === 8
+  return {
+    thinkText: thinkContent.trim(),
+    mainText: (beforeThink + afterClose).trim(),
+    inThink: false,
+    thinkComplete: true,
+  };
+}
+
 export function attachCopyButtons(container) {
   container.querySelectorAll('.copy-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
