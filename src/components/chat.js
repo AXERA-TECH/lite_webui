@@ -338,14 +338,17 @@ export class Chat {
         this._streamingEl.parentNode.insertBefore(thinkEl, this._streamingEl);
         this._streamingThinkEl = thinkEl;
       }
-      const label = this._streamingThinkEl.querySelector('.think-streaming-label');
-      const body = this._streamingThinkEl.querySelector('.think-streaming-body');
-      if (!inThink) {
-        // Think block is complete; stop animation
-        this._streamingThinkEl.dataset.state = 'done';
-        if (label) label.textContent = 'Thought';
+      // Guard: element may not exist yet if think block just opened with whitespace only
+      if (this._streamingThinkEl) {
+        const label = this._streamingThinkEl.querySelector('.think-streaming-label');
+        const body = this._streamingThinkEl.querySelector('.think-streaming-body');
+        if (!inThink) {
+          // Think block is complete; stop animation
+          this._streamingThinkEl.dataset.state = 'done';
+          if (label) label.textContent = 'Thought';
+        }
+        if (body) body.textContent = thinkText;
       }
-      if (body) body.textContent = thinkText;
     }
 
     const cursor = '<span class="streaming-cursor opacity-60 animate-pulse">▋</span>';
