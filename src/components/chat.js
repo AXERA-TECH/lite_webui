@@ -181,14 +181,23 @@ export class Chat {
           const imgWrapper = document.createElement('div');
           imgWrapper.className = 'mb-3';
 
+          // Relative container enables the spinner overlay to be centered on the image
+          const imgContainer = document.createElement('div');
+          imgContainer.className = 'relative inline-block max-w-full';
+          imgContainer.dataset.imgContainer = '1';
+
           const imgEl = document.createElement('img');
           imgEl.src = src;
           imgEl.alt = 'Generated image';
-          imgEl.className = 'max-w-full rounded-xl border border-[var(--c-bd)] shadow-sm';
-          imgWrapper.appendChild(imgEl);
+          // Cap height so large images don't flood the chat; maintain aspect ratio
+          imgEl.className = 'max-h-96 max-w-full block rounded-xl border border-[var(--c-bd)] shadow-sm cursor-pointer';
+          imgEl.title = 'Click to view full resolution';
+          imgEl.addEventListener('click', () => window.open(src, '_blank'));
+          imgContainer.appendChild(imgEl);
+          imgWrapper.appendChild(imgContainer);
 
           const dlRow = document.createElement('div');
-          dlRow.className = 'mt-2 flex items-center gap-2';
+          dlRow.className = 'mt-2 flex items-center gap-2 flex-wrap';
 
           if (msg.generatedSeed != null) {
             const seedBadge = document.createElement('span');
@@ -202,11 +211,36 @@ export class Chat {
             dlRow.appendChild(seedBadge);
           }
 
-          const dlLink = document.createElement('a');
-          dlLink.href = src;
-          dlLink.download = `generated-${idx + 1}.png`;
-          dlLink.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors';
-          dlLink.innerHTML = `${icon('download')} Download`;
+          // Download: fetch as blob to force a real download (bypasses cross-origin restriction
+          // that causes <a download> to open in a new tab instead of saving the file).
+          const dlBtn = document.createElement('button');
+          dlBtn.type = 'button';
+          dlBtn.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors cursor-pointer';
+          dlBtn.innerHTML = `${icon('download')} Download`;
+          dlBtn.title = 'Download image';
+          dlBtn.addEventListener('click', () => {
+            fetch(src, { mode: 'cors' })
+              .then(r => { if (!r.ok) throw new Error('fetch failed'); return r.blob(); })
+              .then(blob => {
+                const objectUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = objectUrl;
+                a.download = `generated-${idx + 1}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+              })
+              .catch(() => window.open(src, '_blank'));
+          });
+
+          // View original: open at full resolution in a new tab
+          const viewBtn = document.createElement('button');
+          viewBtn.type = 'button';
+          viewBtn.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors cursor-pointer';
+          viewBtn.innerHTML = `${icon('externalLink')} View`;
+          viewBtn.title = 'View full resolution in new tab';
+          viewBtn.addEventListener('click', () => window.open(src, '_blank'));
 
           const regenBtn = document.createElement('button');
           regenBtn.type = 'button';
@@ -221,7 +255,8 @@ export class Chat {
             }));
           });
 
-          dlRow.appendChild(dlLink);
+          dlRow.appendChild(dlBtn);
+          dlRow.appendChild(viewBtn);
           dlRow.appendChild(regenBtn);
           imgWrapper.appendChild(dlRow);
           msgDiv.appendChild(imgWrapper);
@@ -426,21 +461,19 @@ export class Chat {
     const container = this.el.querySelector('#chat-messages');
     const wrapperEl = container?.querySelector(`[data-msg-id="${CSS.escape(timestamp)}"]`);
     if (!wrapperEl) return;
-    const msgDiv = wrapperEl.querySelector('div.w-full');
-    if (!msgDiv) return;
-    // Dim the images and action row
-    wrapperEl.querySelectorAll('img[alt="Generated image"]').forEach(img => {
-      img.style.opacity = '0.35';
-      img.style.transition = 'opacity 0.2s';
+    // Dim the image container and action row
+    wrapperEl.querySelectorAll('[data-img-container]').forEach(imgContainer => {
+      imgContainer.style.opacity = '0.35';
+      imgContainer.style.transition = 'opacity 0.2s';
+      // Spinner is absolutely centered over the image
+      const spinner = document.createElement('div');
+      spinner.className = 'regen-spinner absolute inset-0 flex items-center justify-center rounded-xl';
+      spinner.innerHTML = `<div class="w-10 h-10 border-[3px] border-white border-t-transparent rounded-full animate-spin drop-shadow-lg"></div>`;
+      imgContainer.appendChild(spinner);
     });
     wrapperEl.querySelectorAll('.mt-2.flex.items-center.gap-2').forEach(row => {
       row.style.opacity = '0.35';
     });
-    // Show a centered spinner overlay inside msgDiv
-    const spinner = document.createElement('div');
-    spinner.className = 'regen-spinner flex justify-center py-4';
-    spinner.innerHTML = `<div class="w-9 h-9 border-[3px] border-violet-400 dark:border-violet-500 border-t-transparent rounded-full animate-spin"></div>`;
-    msgDiv.appendChild(spinner);
   }
 
   replaceGeneratedImageMessage(timestamp, newMsg) {
