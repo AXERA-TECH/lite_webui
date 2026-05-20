@@ -384,10 +384,9 @@ export class InputBar {
     this._clearImage();
     this._clearVideo();
     this._clearAudio();
-    // Keep draw mode active on draw-only models so the user doesn't need to re-enable it.
+    // Keep draw mode active on imageGen-capable models so every new generation is just one submit away.
     const caps = getCapabilities(this._currentModel, store.getModelCapabilities());
-    const isDrawOnly = caps.imageGen && !caps.text;
-    if (this._drawMode && !isDrawOnly) this._setDrawMode(false);
+    if (this._drawMode && !caps.imageGen) this._setDrawMode(false);
     textarea.value = '';
     this._autoResize(textarea);
 
@@ -489,8 +488,8 @@ export class InputBar {
   setModel(modelId) {
     this._currentModel = modelId;
     const caps = getCapabilities(modelId, store.getModelCapabilities());
-    // Auto-enable draw mode for imageGen-only models (no text capability).
-    if (caps.imageGen && !caps.text && !this._drawMode) {
+    // Auto-enable draw mode for any imageGen-capable model (user-configured or built-in).
+    if (caps.imageGen && !this._drawMode) {
       this._setDrawMode(true); // calls _updateAttachmentButtons internally
     } else {
       this._updateAttachmentButtons();

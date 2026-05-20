@@ -203,6 +203,17 @@ export const store = {
     this.saveConversations(convs);
   },
 
+  updateMessage(convId, timestamp, updates) {
+    const convs = this.getConversations();
+    const idx = convs.findIndex(c => c.id === convId);
+    if (idx === -1) return;
+    const msgIdx = convs[idx].messages.findIndex(m => m.timestamp === timestamp);
+    if (msgIdx === -1) return;
+    convs[idx].messages[msgIdx] = { ...convs[idx].messages[msgIdx], ...updates };
+    convs[idx].updatedAt = new Date().toISOString();
+    this.saveConversations(convs);
+  },
+
   clearMessages(convId) {
     const convs = this.getConversations();
     const idx = convs.findIndex(c => c.id === convId);

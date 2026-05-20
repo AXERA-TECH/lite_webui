@@ -216,7 +216,9 @@ export class Chat {
           regenBtn.addEventListener('click', () => {
             const prompt = msg.generatedPrompt || '';
             if (!prompt) return;
-            document.dispatchEvent(new CustomEvent('chat:regenerate', { detail: { prompt } }));
+            document.dispatchEvent(new CustomEvent('chat:regenerate', {
+              detail: { prompt, msgTimestamp: msg.timestamp },
+            }));
           });
 
           dlRow.appendChild(dlLink);
@@ -413,6 +415,44 @@ export class Chat {
       content: fullText,
       timestamp: new Date().toISOString(),
     });
+    this._scrollToBottom();
+  }
+
+  getMessageByTimestamp(timestamp) {
+    return this._messages.find(m => m.timestamp === timestamp) || null;
+  }
+
+  startRegeneratingMessage(timestamp) {
+    const container = this.el.querySelector('#chat-messages');
+    const wrapperEl = container?.querySelector(`[data-msg-id="${CSS.escape(timestamp)}"]`);
+    if (!wrapperEl) return;
+    const msgDiv = wrapperEl.querySelector('div.w-full');
+    if (!msgDiv) return;
+    // Dim the images and action row
+    wrapperEl.querySelectorAll('img[alt="Generated image"]').forEach(img => {
+      img.style.opacity = '0.35';
+      img.style.transition = 'opacity 0.2s';
+    });
+    wrapperEl.querySelectorAll('.mt-2.flex.items-center.gap-2').forEach(row => {
+      row.style.opacity = '0.35';
+    });
+    // Show a centered spinner overlay inside msgDiv
+    const spinner = document.createElement('div');
+    spinner.className = 'regen-spinner flex justify-center py-4';
+    spinner.innerHTML = `<div class="w-9 h-9 border-[3px] border-violet-400 dark:border-violet-500 border-t-transparent rounded-full animate-spin"></div>`;
+    msgDiv.appendChild(spinner);
+  }
+
+  replaceGeneratedImageMessage(timestamp, newMsg) {
+    // Update in-memory cache
+    const idx = this._messages.findIndex(m => m.timestamp === timestamp);
+    if (idx >= 0) this._messages[idx] = newMsg;
+    const container = this.el.querySelector('#chat-messages');
+    if (!container) return;
+    const wrapperEl = container.querySelector(`[data-msg-id="${CSS.escape(timestamp)}"]`);
+    if (!wrapperEl) return;
+    const newEl = this._buildMessageEl(newMsg);
+    container.replaceChild(newEl, wrapperEl);
     this._scrollToBottom();
   }
 

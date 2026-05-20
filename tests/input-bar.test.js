@@ -274,3 +274,77 @@ describe('InputBar – context display', () => {
     expect(bar.el.querySelector('#context-info').className).not.toContain('text-amber-400');
   });
 });
+
+// ─── Auto draw mode ───────────────────────────────────────────────────────────
+
+describe('InputBar – auto draw mode', () => {
+  afterEach(() => {
+    store.saveModelCapabilities({});
+  });
+
+  it('auto-enables draw mode when model has imageGen capability', () => {
+    const bar = makeBar();
+    store.saveModelCapabilities({ 'flux-dev': { text: true, image: false, audio: false, imageGen: true } });
+    bar.setModel('flux-dev');
+    expect(bar._drawMode).toBe(true);
+  });
+
+  it('draw mode button is highlighted after auto-enable', () => {
+    const bar = makeBar();
+    store.saveModelCapabilities({ 'flux-dev': { text: true, image: false, audio: false, imageGen: true } });
+    bar.setModel('flux-dev');
+    const drawBtn = bar.el.querySelector('#draw-mode-btn');
+    expect(drawBtn.className).toContain('bg-violet-100');
+  });
+
+  it('seed input becomes visible after auto-enable', () => {
+    const bar = makeBar();
+    store.saveModelCapabilities({ 'flux-dev': { text: true, image: false, audio: false, imageGen: true } });
+    bar.setModel('flux-dev');
+    const seedWrapper = bar.el.querySelector('#seed-wrapper');
+    expect(seedWrapper.classList.contains('hidden')).toBe(false);
+  });
+
+  it('does NOT auto-enable draw mode for non-imageGen model', () => {
+    const bar = makeBar();
+    bar.setModel('gpt-4');
+    expect(bar._drawMode).toBe(false);
+  });
+
+  it('also auto-enables for built-in draw-only models like dall-e-3', () => {
+    const bar = makeBar();
+    bar.setModel('dall-e-3');
+    expect(bar._drawMode).toBe(true);
+  });
+
+  it('keeps draw mode active after submit on imageGen model', () => {
+    const bar = makeBar();
+    store.saveModelCapabilities({ 'flux-dev': { text: true, image: false, audio: false, imageGen: true } });
+    bar.setModel('flux-dev');
+    expect(bar._drawMode).toBe(true);
+
+    const events = [];
+    document.addEventListener('inputbar:send', (e) => events.push(e.detail));
+    const textarea = bar.el.querySelector('#message-input');
+    textarea.value = 'a cat in space';
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(events).toHaveLength(1);
+    expect(events[0].draw).toBe(true);
+    expect(bar._drawMode).toBe(true); // still active after submit
+    document.removeEventListener('inputbar:send', events.pop);
+  });
+
+  it('clears draw mode after submit on a non-imageGen model', () => {
+    const bar = makeBar();
+    // Manually enable draw mode, then switch to a non-imageGen model
+    store.saveModelCapabilities({ 'dalle': { text: false, image: false, audio: false, imageGen: true } });
+    bar.setModel('dalle');
+    expect(bar._drawMode).toBe(true);
+
+    // Now switch to text-only model
+    bar.setModel('gpt-4');
+    // _updateAttachmentButtons disables draw mode when imageGen is not supported
+    expect(bar._drawMode).toBe(false);
+  });
+});

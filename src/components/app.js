@@ -163,24 +163,17 @@ export class App {
       this._abortController = null;
     });
 
-    // Regenerate image with same prompt (no history, new random seed)
+    // Regenerate image in-place with same prompt (no new user message, new random seed)
     document.addEventListener('chat:regenerate', async (e) => {
-      const { prompt } = e.detail;
-      if (!prompt) return;
+      const { prompt, msgTimestamp } = e.detail;
+      if (!prompt || !msgTimestamp) return;
       const settings = store.getSettings();
       const model = this.modelPicker.getModel();
       if (!model) {
         this.chat.showError('Error: no model selected');
         return;
       }
-      let convId = store.getCurrentConversationId();
-      if (!convId) {
-        const conv = store.createConversation(model);
-        convId = conv.id;
-        store.setCurrentConversationId(convId);
-        this.sidebar.update();
-      }
-      await this._handleDrawTask({ convId, model, settings, prompt, image: null, seed: null });
+      await this._handleRegenerateTask({ originalTimestamp: msgTimestamp, model, settings, prompt });
     });
 
     // Model change
@@ -501,6 +494,51 @@ export class App {
       this.sidebar.update();
     } catch (err) {
       if (err.name !== 'AbortError') this.chat.showError(`Error: ${err.message}`);
+    } finally {
+      this._abortController = null;
+      this.inputBar.setSending(false);
+      this.inputBar.focus();
+    }
+  }
+
+  async _handleRegenerateTask({ originalTimestamp, model, settings, prompt }) {
+    const originalMsg = this.chat.getMessageByTimestamp(originalTimestamp);
+    this.chat.startRegeneratingMessage(originalTimestamp);
+    this.inputBar.setSending(true);
+
+    this._abortController = new AbortController();
+    const { signal } = this._abortController;
+
+    try {
+      const newSeed = Math.floor(Math.random() * 1_000_000_000);
+      const result = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { seed: newSeed, signal });
+      if (!result.images.length) throw new Error('No images returned — the model may not support image generation');
+
+      const newMsg = {
+        role: 'assistant',
+        content: `Generated image for: "${prompt}"`,
+        generatedImages: result.images,
+        generatedPrompt: prompt,
+        generatedSeed: result.seed !== null ? result.seed : newSeed,
+        timestamp: originalTimestamp,
+      };
+
+      this.chat.replaceGeneratedImageMessage(originalTimestamp, newMsg);
+
+      // Update persisted message in store
+      const convId = store.getCurrentConversationId();
+      if (convId) {
+        const persistedImages = result.images.filter(u => u.startsWith('http'));
+        store.updateMessage(convId, originalTimestamp, {
+          ...(persistedImages.length ? { generatedImages: persistedImages } : {}),
+          generatedSeed: newMsg.generatedSeed,
+          generatedPrompt: prompt,
+        });
+      }
+    } catch (err) {
+      // Restore original message on any failure (including abort)
+      if (originalMsg) this.chat.replaceGeneratedImageMessage(originalTimestamp, originalMsg);
+      if (err.name !== 'AbortError') this.chat.showError(`Regenerate failed: ${err.message}`);
     } finally {
       this._abortController = null;
       this.inputBar.setSending(false);

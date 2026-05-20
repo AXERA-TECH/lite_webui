@@ -148,3 +148,27 @@ describe('store – model capabilities', () => {
     expect(store.getModelCapabilities('http://b.local')['model-a'].image).toBe(false);
   });
 });
+
+describe('store – updateMessage', () => {
+  it('merges updates into the target message by timestamp', () => {
+    const conv = store.createConversation('m');
+    store.addMessage(conv.id, { role: 'assistant', content: 'old', timestamp: 't1', generatedSeed: 111 });
+    store.updateMessage(conv.id, 't1', { generatedSeed: 999, generatedImages: ['http://img/a.png'] });
+    const updated = store.getConversations().find(c => c.id === conv.id);
+    expect(updated.messages[0].generatedSeed).toBe(999);
+    expect(updated.messages[0].generatedImages).toEqual(['http://img/a.png']);
+    expect(updated.messages[0].content).toBe('old'); // untouched fields preserved
+  });
+
+  it('does nothing when conversation id does not exist', () => {
+    expect(() => store.updateMessage('no-such-id', 't1', { content: 'x' })).not.toThrow();
+  });
+
+  it('does nothing when no message matches the timestamp', () => {
+    const conv = store.createConversation('m');
+    store.addMessage(conv.id, { role: 'user', content: 'hi', timestamp: 'ts-real' });
+    expect(() => store.updateMessage(conv.id, 'ts-ghost', { content: 'x' })).not.toThrow();
+    const msgs = store.getConversations().find(c => c.id === conv.id).messages;
+    expect(msgs[0].content).toBe('hi'); // unchanged
+  });
+});
