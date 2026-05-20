@@ -46,6 +46,7 @@ export class Chat {
     this._streamingEl = null;
     this._typingEl = null;
     this._errorEl = null;
+    this._lightboxKeyHandler = null;
   }
 
   render() {
@@ -183,7 +184,7 @@ export class Chat {
 
           // Relative container enables the spinner overlay to be centered on the image
           const imgContainer = document.createElement('div');
-          imgContainer.className = 'relative inline-block max-w-full';
+          imgContainer.className = 'group relative inline-block max-w-full';
           imgContainer.dataset.imgContainer = '1';
 
           const imgEl = document.createElement('img');
@@ -191,9 +192,22 @@ export class Chat {
           imgEl.alt = 'Generated image';
           // Cap height so large images don't flood the chat; maintain aspect ratio
           imgEl.className = 'max-h-96 max-w-full block rounded-xl border border-[var(--c-bd)] shadow-sm cursor-pointer';
-          imgEl.title = 'Click to view full resolution';
-          imgEl.addEventListener('click', () => window.open(src, '_blank'));
+          imgEl.title = 'Click to expand';
+          imgEl.addEventListener('click', () => this._openLightbox(src));
+
+          // Expand button: visible on hover (top-right corner)
+          const expandBtn = document.createElement('button');
+          expandBtn.type = 'button';
+          expandBtn.className = 'absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-all duration-150 bg-black/50 hover:bg-black/70 text-white rounded-lg p-1.5 cursor-pointer';
+          expandBtn.innerHTML = icon('expand');
+          expandBtn.title = 'View full resolution';
+          expandBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._openLightbox(src);
+          });
+
           imgContainer.appendChild(imgEl);
+          imgContainer.appendChild(expandBtn);
           imgWrapper.appendChild(imgContainer);
 
           const dlRow = document.createElement('div');
@@ -211,21 +225,35 @@ export class Chat {
             dlRow.appendChild(seedBadge);
           }
 
-          // Download: fetch as blob to force a real download (bypasses cross-origin restriction
-          // that causes <a download> to open in a new tab instead of saving the file).
+          // Download: in dev mode use the Vite proxy to bypass CORS; in prod try direct cors fetch
           const dlBtn = document.createElement('button');
           dlBtn.type = 'button';
           dlBtn.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors cursor-pointer';
           dlBtn.innerHTML = `${icon('download')} Download`;
           dlBtn.title = 'Download image';
           dlBtn.addEventListener('click', () => {
-            fetch(src, { mode: 'cors' })
+            const filename = `generated-${idx + 1}.png`;
+            let fetchPromise;
+            try {
+              const parsed = new URL(src);
+              if (import.meta.env.DEV) {
+                fetchPromise = fetch(`/lw-proxy${parsed.pathname}${parsed.search}`, {
+                  headers: { 'X-LW-Target': parsed.origin },
+                });
+              } else {
+                fetchPromise = fetch(src, { mode: 'cors' });
+              }
+            } catch {
+              window.open(src, '_blank');
+              return;
+            }
+            fetchPromise
               .then(r => { if (!r.ok) throw new Error('fetch failed'); return r.blob(); })
               .then(blob => {
                 const objectUrl = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = objectUrl;
-                a.download = `generated-${idx + 1}.png`;
+                a.download = filename;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -233,14 +261,6 @@ export class Chat {
               })
               .catch(() => window.open(src, '_blank'));
           });
-
-          // View original: open at full resolution in a new tab
-          const viewBtn = document.createElement('button');
-          viewBtn.type = 'button';
-          viewBtn.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors cursor-pointer';
-          viewBtn.innerHTML = `${icon('externalLink')} View`;
-          viewBtn.title = 'View full resolution in new tab';
-          viewBtn.addEventListener('click', () => window.open(src, '_blank'));
 
           const regenBtn = document.createElement('button');
           regenBtn.type = 'button';
@@ -256,7 +276,6 @@ export class Chat {
           });
 
           dlRow.appendChild(dlBtn);
-          dlRow.appendChild(viewBtn);
           dlRow.appendChild(regenBtn);
           imgWrapper.appendChild(dlRow);
           msgDiv.appendChild(imgWrapper);
@@ -556,6 +575,7 @@ export class Chat {
   }
 
   clear() {
+    this._closeLightbox();
     this._messages = [];
     this._streamingEl = null;
     this._streamingText = '';
@@ -563,5 +583,61 @@ export class Chat {
     this._errorEl = null;
     const container = this.el.querySelector('#chat-messages');
     if (container) container.innerHTML = this._welcomeScreen();
+  }
+
+  _ensureLightbox() {
+    if (document.getElementById('img-lightbox')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'img-lightbox';
+    overlay.style.cssText = 'display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.85); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); align-items:center; justify-content:center; padding:24px;';
+    overlay.addEventListener('click', () => this._closeLightbox());
+
+    const imgWrapper = document.createElement('div');
+    imgWrapper.style.cssText = 'position:relative; max-height:100%; max-width:100%; display:flex; align-items:center; justify-content:center;';
+    imgWrapper.addEventListener('click', e => e.stopPropagation());
+
+    const img = document.createElement('img');
+    img.id = 'img-lightbox-img';
+    img.alt = 'Full resolution';
+    img.style.cssText = 'max-height:90vh; max-width:90vw; object-fit:contain; border-radius:12px; box-shadow:0 25px 60px rgba(0,0,0,0.6);';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.title = 'Close (Esc)';
+    closeBtn.innerHTML = icon('x');
+    closeBtn.style.cssText = 'position:absolute; top:-14px; right:-14px; background:white; color:#374151; border:none; border-radius:9999px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.3); transition:background 0.15s;';
+    closeBtn.addEventListener('mouseenter', () => { closeBtn.style.background = '#f3f4f6'; });
+    closeBtn.addEventListener('mouseleave', () => { closeBtn.style.background = 'white'; });
+    closeBtn.addEventListener('click', () => this._closeLightbox());
+
+    imgWrapper.appendChild(img);
+    imgWrapper.appendChild(closeBtn);
+    overlay.appendChild(imgWrapper);
+    document.body.appendChild(overlay);
+  }
+
+  _openLightbox(src) {
+    this._ensureLightbox();
+    const overlay = document.getElementById('img-lightbox');
+    const img = document.getElementById('img-lightbox-img');
+    if (!overlay || !img) return;
+    img.src = src;
+    overlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    if (this._lightboxKeyHandler) {
+      document.removeEventListener('keydown', this._lightboxKeyHandler);
+    }
+    this._lightboxKeyHandler = (e) => { if (e.key === 'Escape') this._closeLightbox(); };
+    document.addEventListener('keydown', this._lightboxKeyHandler);
+  }
+
+  _closeLightbox() {
+    const overlay = document.getElementById('img-lightbox');
+    if (overlay) overlay.style.display = 'none';
+    document.body.style.overflow = '';
+    if (this._lightboxKeyHandler) {
+      document.removeEventListener('keydown', this._lightboxKeyHandler);
+      this._lightboxKeyHandler = null;
+    }
   }
 }
