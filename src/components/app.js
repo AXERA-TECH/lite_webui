@@ -163,6 +163,26 @@ export class App {
       this._abortController = null;
     });
 
+    // Regenerate image with same prompt (no history, new random seed)
+    document.addEventListener('chat:regenerate', async (e) => {
+      const { prompt } = e.detail;
+      if (!prompt) return;
+      const settings = store.getSettings();
+      const model = this.modelPicker.getModel();
+      if (!model) {
+        this.chat.showError('Error: no model selected');
+        return;
+      }
+      let convId = store.getCurrentConversationId();
+      if (!convId) {
+        const conv = store.createConversation(model);
+        convId = conv.id;
+        store.setCurrentConversationId(convId);
+        this.sidebar.update();
+      }
+      await this._handleDrawTask({ convId, model, settings, prompt, image: null, seed: null });
+    });
+
     // Model change
     document.addEventListener('model:changed', () => {
       this.inputBar.setModel(this.modelPicker.getModel());
@@ -459,6 +479,7 @@ export class App {
         role: 'assistant',
         content: `Generated image for: "${prompt}"`,
         generatedImages: result.images,
+        generatedPrompt: prompt,
         ...(result.seed !== null ? { generatedSeed: result.seed } : {}),
         timestamp: new Date().toISOString(),
       };
@@ -471,6 +492,7 @@ export class App {
         role: 'assistant',
         content: assistantMsg.content,
         timestamp: assistantMsg.timestamp,
+        generatedPrompt: prompt,
         ...(persistedImages.length ? { generatedImages: persistedImages } : {}),
         ...(assistantMsg.generatedSeed !== undefined ? { generatedSeed: assistantMsg.generatedSeed } : {}),
       });

@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { formatCompactTokenCount } from '../api.js';
-import { supportsAudio, supportsImage, supportsVideo, supportsImageGen } from '../capabilities.js';
+import { supportsAudio, supportsImage, supportsVideo, supportsImageGen, getCapabilities } from '../capabilities.js';
 import { icon } from '../icons.js';
 
 const VIDEO_SIZE_LIMIT_MB = 50;
@@ -384,7 +384,10 @@ export class InputBar {
     this._clearImage();
     this._clearVideo();
     this._clearAudio();
-    if (this._drawMode) this._setDrawMode(false);
+    // Keep draw mode active on draw-only models so the user doesn't need to re-enable it.
+    const caps = getCapabilities(this._currentModel, store.getModelCapabilities());
+    const isDrawOnly = caps.imageGen && !caps.text;
+    if (this._drawMode && !isDrawOnly) this._setDrawMode(false);
     textarea.value = '';
     this._autoResize(textarea);
 
@@ -485,7 +488,13 @@ export class InputBar {
 
   setModel(modelId) {
     this._currentModel = modelId;
-    this._updateAttachmentButtons();
+    const caps = getCapabilities(modelId, store.getModelCapabilities());
+    // Auto-enable draw mode for imageGen-only models (no text capability).
+    if (caps.imageGen && !caps.text && !this._drawMode) {
+      this._setDrawMode(true); // calls _updateAttachmentButtons internally
+    } else {
+      this._updateAttachmentButtons();
+    }
   }
 
   _updateAttachmentButtons() {

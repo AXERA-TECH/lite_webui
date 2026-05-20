@@ -208,7 +208,19 @@ export class Chat {
           dlLink.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors';
           dlLink.innerHTML = `${icon('download')} Download`;
 
+          const regenBtn = document.createElement('button');
+          regenBtn.type = 'button';
+          regenBtn.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors cursor-pointer';
+          regenBtn.innerHTML = `${icon('refresh')} Regenerate`;
+          regenBtn.title = 'Regenerate with same prompt (new random seed)';
+          regenBtn.addEventListener('click', () => {
+            const prompt = msg.generatedPrompt || '';
+            if (!prompt) return;
+            document.dispatchEvent(new CustomEvent('chat:regenerate', { detail: { prompt } }));
+          });
+
           dlRow.appendChild(dlLink);
+          dlRow.appendChild(regenBtn);
           imgWrapper.appendChild(dlRow);
           msgDiv.appendChild(imgWrapper);
         });
