@@ -292,8 +292,12 @@ export class Chat {
 
       if (time) {
         const timeEl = document.createElement('div');
-        timeEl.className = 'text-[11px] text-[var(--c-tx3)] mt-2';
-        timeEl.textContent = time;
+        timeEl.className = 'text-[11px] text-[var(--c-tx3)] mt-2 flex items-center gap-1.5';
+        let inner = `<span>${time}</span>`;
+        if (msg.model) {
+          inner += `<span class="opacity-40">·</span><span class="inline-flex items-center gap-1 opacity-70 hover:opacity-100 transition-opacity" title="Model: ${escapeHtml(msg.model)}">${icon('info')}<span class="max-w-[200px] truncate">${escapeHtml(msg.model)}</span></span>`;
+        }
+        timeEl.innerHTML = inner;
         msgDiv.appendChild(timeEl);
       }
 
@@ -437,7 +441,7 @@ export class Chat {
     this._scrollToBottom();
   }
 
-  finalizeAssistantMessage(fullText) {
+  finalizeAssistantMessage(fullText, model = '') {
     if (!this._streamingEl) return;
 
     const msgDiv = this._streamingEl.parentNode;
@@ -470,11 +474,28 @@ export class Chat {
     attachCopyButtons(this._streamingEl);
     this._streamingEl = null;
     this._streamingText = '';
+
+    const ts = new Date().toISOString();
     this._messages.push({
       role: 'assistant',
       content: fullText,
-      timestamp: new Date().toISOString(),
+      timestamp: ts,
+      ...(model ? { model } : {}),
     });
+
+    // Append model meta row to the live message wrapper
+    if (model) {
+      const metaEl = document.createElement('div');
+      metaEl.className = 'text-[11px] text-[var(--c-tx3)] mt-2 flex items-center gap-1.5';
+      metaEl.innerHTML = `<span>${formatTime(ts)}</span><span class="opacity-40">·</span><span class="inline-flex items-center gap-1 opacity-70 hover:opacity-100 transition-opacity" title="Model: ${escapeHtml(model)}">${icon('info')}<span class="max-w-[200px] truncate">${escapeHtml(model)}</span></span>`;
+      msgDiv.appendChild(metaEl);
+    } else {
+      const metaEl = document.createElement('div');
+      metaEl.className = 'text-[11px] text-[var(--c-tx3)] mt-2';
+      metaEl.textContent = formatTime(ts);
+      msgDiv.appendChild(metaEl);
+    }
+
     this._scrollToBottom();
   }
 

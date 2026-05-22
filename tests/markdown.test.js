@@ -78,4 +78,37 @@ describe('renderMarkdown – LaTeX rendering', () => {
     expect(codeMatch).not.toBeNull();
     expect(codeMatch[1]).toContain('frac');
   });
+
+  it('renders \\(...\\) inline math delimiters (LLM/OCR output style)', () => {
+    // LLMs often output \( ... \) instead of $ ... $
+    const input = 'The result is \\(A_{n}=a_{0}\\left[1+\\frac{3}{4}\\sum_{k=1}^{n}\\left(\\frac{4}{9}\\right)^{k}\\right]\\)';
+    const html = renderMarkdown(input);
+    expect(isKatexRendered(html)).toBe(true);
+    expect(containsRaw(html, '\\frac')).toBe(false);
+    expect(containsRaw(html, '\\sum')).toBe(false);
+    expect(containsRaw(html, '\\left')).toBe(false);
+  });
+
+  it('renders \\[...\\] display math delimiters (LLM/OCR output style)', () => {
+    const input = 'Formula:\n\\[A_n = \\sum_{k=1}^n \\frac{k}{n^2}\\]';
+    const html = renderMarkdown(input);
+    expect(isKatexRendered(html)).toBe(true);
+    expect(containsRaw(html, '\\frac')).toBe(false);
+    expect(containsRaw(html, '\\sum')).toBe(false);
+  });
+
+  it('does not convert \\left( or \\right) inside \\(...\\) math', () => {
+    // Ensure \left( and \right) inside the math block are preserved as KaTeX commands
+    const input = '\\(\\left(\\frac{1}{2}\\right)\\)';
+    const html = renderMarkdown(input);
+    expect(isKatexRendered(html)).toBe(true);
+    // \frac should be rendered, not raw
+    expect(containsRaw(html, '\\frac')).toBe(false);
+  });
+
+  it('handles multiple \\(...\\) expressions in one text', () => {
+    const input = 'First: \\(a^2\\) and second: \\(b^2\\). Sum: \\(a^2 + b^2\\).';
+    const html = renderMarkdown(input);
+    expect(isKatexRendered(html)).toBe(true);
+  });
 });

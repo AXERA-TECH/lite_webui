@@ -110,6 +110,81 @@ describe('App model state', () => {
   });
 });
 
+describe('App model metadata in messages', () => {
+  function makeStreamFetch(text) {
+    const sseChunks = [
+      `data: {"choices":[{"delta":{"content":"${text}"}}]}\n\n`,
+      `data: [DONE]\n\n`,
+    ];
+    let idx = 0;
+    const reader = {
+      read: vi.fn(async () =>
+        idx >= sseChunks.length
+          ? { done: true }
+          : { done: false, value: new TextEncoder().encode(sseChunks[idx++]) }
+      ),
+    };
+    return vi.fn(async () => ({
+      ok: true, body: { getReader: () => reader },
+    }));
+  }
+
+  it('saves model name on assistant message after streaming response', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['gpt-test']);
+    store.setCurrentModel('http://a.local', 'gpt-test');
+    globalThis.fetch = makeStreamFetch('Hello world');
+
+    const { app } = mountApp();
+    await app._handleSend('Hi', null, null, null);
+
+    const conv = store.getCurrentConversation();
+    const last = conv.messages.at(-1);
+    expect(last.role).toBe('assistant');
+    expect(last.model).toBe('gpt-test');
+  });
+
+  it('renders model name badge in the chat DOM after streaming', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['my-model-v2']);
+    store.setCurrentModel('http://a.local', 'my-model-v2');
+    globalThis.fetch = makeStreamFetch('Response text');
+
+    const { app, root } = mountApp();
+    await app._handleSend('test', null, null, null);
+
+    const chatEl = root.querySelector('#chat-messages');
+    expect(chatEl?.innerHTML).toContain('my-model-v2');
+  });
+
+  it('renders model badge when loading conversation from store', () => {
+    setViewport(1280);
+    const conv = store.createConversation('some-model');
+    store.setCurrentConversationId(conv.id);
+    store.addMessage(conv.id, { role: 'user', content: 'hello', timestamp: '2024-01-01T00:00:00Z' });
+    store.addMessage(conv.id, { role: 'assistant', content: 'world', model: 'some-model', timestamp: '2024-01-01T00:00:01Z' });
+
+    const { root } = mountApp();
+    const chatEl = root.querySelector('#chat-messages');
+    expect(chatEl?.innerHTML).toContain('some-model');
+  });
+
+  it('does not show model badge when model is absent on message', () => {
+    setViewport(1280);
+    const conv = store.createConversation('x');
+    store.setCurrentConversationId(conv.id);
+    store.addMessage(conv.id, { role: 'user', content: 'hi', timestamp: '2024-01-01T00:00:00Z' });
+    store.addMessage(conv.id, { role: 'assistant', content: 'hey', timestamp: '2024-01-01T00:00:01Z' });
+
+    const { root } = mountApp();
+    const chatEl = root.querySelector('#chat-messages');
+    // No model badge — the info icon should not appear
+    expect(chatEl?.querySelectorAll('[title^="Model:"]').length).toBe(0);
+  });
+});
+
 describe('App audio workflows', () => {
   it('uploads audio and returns transcription text', async () => {
     setViewport(1280);

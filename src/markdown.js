@@ -105,9 +105,21 @@ marked.setOptions({
 marked.use(markedKatex({ throwOnError: false, output: 'html', nonStandard: true }));
 
 /**
- * Wraps bare LaTeX command sequences (e.g. \underline{\text{...}}) in $...$ math delimiters
- * so KaTeX can render them. Only processes regions that are not already inside math or code.
+ * Converts \(...\) and \[...\] LaTeX math delimiters to $...$ and $$...$$
+ * so marked-katex-extension can render them.
+ * These forms are commonly output by LLMs and OCR models.
+ * NOTE: \left( / \right) are NOT affected because the backslash there is
+ * followed by letters (e.g. 'l' in 'left'), not directly by a bracket char.
  */
+function convertAltMathDelimiters(text) {
+  // \[...\] → $$...$$ (display math, may be multi-line)
+  text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_, inner) => `$$${inner}$$`);
+  // \(...\) → $...$ (inline math)
+  text = text.replace(/\\\(([\s\S]*?)\\\)/g, (_, inner) => `$${inner}$`);
+  return text;
+}
+
+
 function wrapBareLaTeX(text) {
   const result = [];
   // Protect existing math ($...$, $$...$$) and code blocks (``` and `) from modification
@@ -164,7 +176,7 @@ function _wrapLatexCmds(text) {
 export function renderMarkdown(text) {
   if (!text) return '';
   try {
-    return marked.parse(String(wrapBareLaTeX(text)));
+    return marked.parse(String(wrapBareLaTeX(convertAltMathDelimiters(String(text)))));
   } catch {
     return escapeHtml(String(text));
   }

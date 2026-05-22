@@ -355,10 +355,11 @@ export class App {
       if (!started) this.chat.startAssistantMessage();
 
       // Finalize
-      this.chat.finalizeAssistantMessage(fullText);
+      this.chat.finalizeAssistantMessage(fullText, model);
       const assistantMsg = {
         role: 'assistant',
         content: fullText,
+        model,
         timestamp: new Date().toISOString(),
       };
       store.addMessage(convId, assistantMsg);
@@ -369,11 +370,12 @@ export class App {
       if (err.name === 'AbortError') {
         // User stopped — finalize whatever was received so far.
         if (!started) this.chat.startAssistantMessage();
-        this.chat.finalizeAssistantMessage(fullText);
+        this.chat.finalizeAssistantMessage(fullText, model);
         if (fullText) {
           const assistantMsg = {
             role: 'assistant',
             content: fullText,
+            model,
             timestamp: new Date().toISOString(),
           };
           store.addMessage(convId, assistantMsg);
@@ -472,6 +474,7 @@ export class App {
         content: `Generated image for: "${prompt}"`,
         generatedImages: result.images,
         generatedPrompt: prompt,
+        model,
         ...(result.seed !== null ? { generatedSeed: result.seed } : {}),
         timestamp: new Date().toISOString(),
       };
@@ -483,6 +486,7 @@ export class App {
       store.addMessage(convId, {
         role: 'assistant',
         content: assistantMsg.content,
+        model,
         timestamp: assistantMsg.timestamp,
         generatedPrompt: prompt,
         ...(persistedImages.length ? { generatedImages: persistedImages } : {}),
@@ -520,6 +524,7 @@ export class App {
         generatedImages: result.images,
         generatedPrompt: prompt,
         generatedSeed: result.seed !== null ? result.seed : newSeed,
+        model: model || (originalMsg?.model ?? ''),
         timestamp: originalTimestamp,
       };
 
@@ -574,10 +579,11 @@ export class App {
       if (!instruction) {
         this.chat.hideTypingIndicator();
         this.chat.startAssistantMessage();
-        this.chat.finalizeAssistantMessage(transcript);
+        this.chat.finalizeAssistantMessage(transcript, model);
         const assistantMsg = {
           role: 'assistant',
           content: transcript,
+          model,
           timestamp: new Date().toISOString(),
         };
         store.addMessage(convId, assistantMsg);
@@ -613,10 +619,11 @@ export class App {
         this.chat.appendToAssistantMessage(chunk);
       }
 
-      this.chat.finalizeAssistantMessage(fullText);
+      this.chat.finalizeAssistantMessage(fullText, model);
       const assistantMsg = {
         role: 'assistant',
         content: fullText,
+        model,
         timestamp: new Date().toISOString(),
       };
       store.addMessage(convId, assistantMsg);
@@ -626,11 +633,12 @@ export class App {
     } catch (err) {
       if (err.name === 'AbortError') {
         // Finalize partial text if any was received
-        this.chat.finalizeAssistantMessage(fullText);
+        this.chat.finalizeAssistantMessage(fullText, model);
         if (fullText) {
           const assistantMsg = {
             role: 'assistant',
             content: fullText,
+            model,
             timestamp: new Date().toISOString(),
           };
           store.addMessage(convId, assistantMsg);
