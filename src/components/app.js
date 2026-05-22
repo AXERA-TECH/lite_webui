@@ -47,6 +47,28 @@ export class App {
     this._sessionMessages.get(convId).push(msg);
   }
 
+  /**
+   * Fetches an HTTP image URL and returns a base64 data URL so the image
+   * is self-contained in the browser and doesn't require the backend to
+   * remain running. Falls back to the original URL on any error.
+   */
+  async _fetchImageAsDataUrl(url) {
+    if (!url || !url.startsWith('http')) return url;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return url;
+      const blob = await res.blob();
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve(url);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return url;
+    }
+  }
+
   _clearSessionMsgs(convId) {
     this._sessionMessages.delete(convId);
   }
@@ -469,10 +491,13 @@ export class App {
       if (!result.images.length) {
         throw new Error('No images returned — the model may not support image generation');
       }
+      // Convert HTTP URLs to base64 data URLs so images remain accessible
+      // even after the backend is stopped — they become self-contained in the browser.
+      const dataImages = await Promise.all(result.images.map(u => this._fetchImageAsDataUrl(u)));
       const assistantMsg = {
         role: 'assistant',
         content: `Generated image for: "${prompt}"`,
-        generatedImages: result.images,
+        generatedImages: dataImages,
         generatedPrompt: prompt,
         model,
         ...(result.seed !== null ? { generatedSeed: result.seed } : {}),
@@ -480,16 +505,15 @@ export class App {
       };
 
       this.chat.appendGeneratedImageMessage(assistantMsg);
-      // Persist to localStorage. URL-based images are small and safe to store;
-      // base64 data URLs are excluded to avoid exceeding localStorage quota.
-      const persistedImages = result.images.filter(u => u.startsWith('http'));
+      // Persist to localStorage with data URLs so images survive page reload too.
+      // The store's quota handler will swallow any QuotaExceededError gracefully.
       store.addMessage(convId, {
         role: 'assistant',
         content: assistantMsg.content,
         model,
         timestamp: assistantMsg.timestamp,
         generatedPrompt: prompt,
-        ...(persistedImages.length ? { generatedImages: persistedImages } : {}),
+        ...(dataImages.length ? { generatedImages: dataImages } : {}),
         ...(assistantMsg.generatedSeed !== undefined ? { generatedSeed: assistantMsg.generatedSeed } : {}),
       });
       this._pushSessionMsg(convId, assistantMsg);
@@ -518,10 +542,12 @@ export class App {
       const result = await generateImage(cfg.baseUrl, cfg.apiKey, model, prompt, { seed: newSeed, signal });
       if (!result.images.length) throw new Error('No images returned — the model may not support image generation');
 
+      // Convert HTTP URLs to base64 data URLs for persistence.
+      const dataImages = await Promise.all(result.images.map(u => this._fetchImageAsDataUrl(u)));
       const newMsg = {
         role: 'assistant',
         content: `Generated image for: "${prompt}"`,
-        generatedImages: result.images,
+        generatedImages: dataImages,
         generatedPrompt: prompt,
         generatedSeed: result.seed !== null ? result.seed : newSeed,
         model: model || (originalMsg?.model ?? ''),
@@ -530,12 +556,11 @@ export class App {
 
       this.chat.replaceGeneratedImageMessage(originalTimestamp, newMsg);
 
-      // Update persisted message in store
+      // Update persisted message in store with data URLs.
       const convId = store.getCurrentConversationId();
       if (convId) {
-        const persistedImages = result.images.filter(u => u.startsWith('http'));
         store.updateMessage(convId, originalTimestamp, {
-          ...(persistedImages.length ? { generatedImages: persistedImages } : {}),
+          ...(dataImages.length ? { generatedImages: dataImages } : {}),
           generatedSeed: newMsg.generatedSeed,
           generatedPrompt: prompt,
         });

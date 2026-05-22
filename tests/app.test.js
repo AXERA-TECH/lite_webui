@@ -288,3 +288,75 @@ describe('App audio workflows', () => {
     expect(capturedChatBody).toContain('原始会议录音文本');
   });
 });
+
+describe('App image generation – data URL persistence', () => {
+  function makeImageFetch(imageUrl) {
+    // First call: image generation API → returns HTTP URL
+    // Subsequent calls: fetching the image itself → returns a fake PNG blob
+    let generationDone = false;
+    return vi.fn(async (url) => {
+      if (!generationDone && String(url).includes('/v1/images/')) {
+        generationDone = true;
+        return {
+          ok: true,
+          json: async () => ({ data: [{ url: imageUrl, seed: 42 }] }),
+        };
+      }
+      // Simulates fetching the image URL to convert to data URL
+      if (String(url) === imageUrl) {
+        const pngBytes = new Uint8Array([137, 80, 78, 71]); // PNG magic bytes
+        return {
+          ok: true,
+          blob: async () => new Blob([pngBytes], { type: 'image/png' }),
+        };
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+  }
+
+  it('stores a base64 data URL (not HTTP URL) in the conversation after image generation', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['flux-dev']);
+    store.setCurrentModel('http://a.local', 'flux-dev');
+    store.saveModelCapabilities({ 'flux-dev': { text: true, image: false, audio: false, imageGen: true } });
+
+    const imageUrl = 'http://a.local/images/generated/test-img.png';
+    globalThis.fetch = makeImageFetch(imageUrl);
+
+    const { app } = mountApp();
+    await app._handleSend('a cat', null, null, null, true);
+
+    const conv = store.getCurrentConversation();
+    const lastMsg = conv.messages.at(-1);
+    expect(lastMsg.generatedImages).toBeDefined();
+    expect(lastMsg.generatedImages.length).toBeGreaterThan(0);
+    // Must be a data URL, NOT the original HTTP URL
+    expect(lastMsg.generatedImages[0]).toMatch(/^data:/);
+    expect(lastMsg.generatedImages[0]).not.toBe(imageUrl);
+  });
+
+  it('falls back to HTTP URL when image fetch fails', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['flux-dev']);
+    store.setCurrentModel('http://a.local', 'flux-dev');
+    store.saveModelCapabilities({ 'flux-dev': { text: true, image: false, audio: false, imageGen: true } });
+
+    const imageUrl = 'http://a.local/images/generated/fail-img.png';
+    globalThis.fetch = vi.fn(async (url) => {
+      if (String(url).includes('/v1/images/')) {
+        return { ok: true, json: async () => ({ data: [{ url: imageUrl, seed: 7 }] }) };
+      }
+      // Image fetch fails (backend unreachable)
+      throw new Error('Network error');
+    });
+
+    const { app } = mountApp();
+    await app._handleSend('a dog', null, null, null, true);
+
+    const conv = store.getCurrentConversation();
+    const lastMsg = conv.messages.at(-1);
+    expect(lastMsg.generatedImages?.[0]).toBe(imageUrl);
+  });
+});
