@@ -102,10 +102,37 @@ marked.setOptions({
 // Enable KaTeX math rendering: $...$ for inline, $$...$$ for block.
 marked.use(markedKatex({ throwOnError: false, output: 'html' }));
 
+/**
+ * Wraps bare LaTeX command sequences (e.g. \underline{\text{...}}) in $...$ math delimiters
+ * so KaTeX can render them. Only processes regions that are not already inside math or code.
+ */
+function wrapBareLaTeX(text) {
+  const result = [];
+  // Protect existing math ($...$, $$...$$) and code blocks (``` and `) from modification
+  const protectedRe = /`{3}[\s\S]*?`{3}|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g;
+  let last = 0;
+  let m;
+  while ((m = protectedRe.exec(text)) !== null) {
+    if (m.index > last) result.push(_wrapLatexCmds(text.slice(last, m.index)));
+    result.push(m[0]);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) result.push(_wrapLatexCmds(text.slice(last)));
+  return result.join('');
+}
+
+/** Wraps \cmd{...} sequences (with up to 3 levels of nested braces) in $...$. */
+function _wrapLatexCmds(text) {
+  return text.replace(
+    /\\[a-zA-Z]+(?:\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})+/g,
+    match => `$${match}$`,
+  );
+}
+
 export function renderMarkdown(text) {
   if (!text) return '';
   try {
-    return marked.parse(String(text));
+    return marked.parse(String(wrapBareLaTeX(text)));
   } catch {
     return escapeHtml(String(text));
   }

@@ -154,9 +154,10 @@ export class Chat {
     wrapper.dataset.msgId = msg.timestamp || Math.random();
 
     if (isUser) {
-      const imageHtml = images.map(img => `
-        <img src="${img.image_url?.url || ''}" alt="Attached image" class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] object-cover mb-2" />
-      `).join('');
+      const imageHtml = images.map(img => {
+        const src = escapeHtml(img.image_url?.url || '');
+        return `<img src="${src}" data-lightbox="1" alt="Attached image" class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] object-cover cursor-pointer mb-2 hover:opacity-90 transition-opacity" title="Click to expand" />`;
+      }).join('');
 
       const videoHtml = videos.map(vid => `
         <video src="${escapeHtml(vid.video_url?.url || '')}" controls muted playsinline
@@ -173,6 +174,11 @@ export class Chat {
           </div>
         </div>
       `;
+
+      // Attach lightbox to user-sent images after innerHTML is set
+      wrapper.querySelectorAll('img[data-lightbox]').forEach(imgEl => {
+        imgEl.addEventListener('click', () => this._openLightbox(imgEl.src));
+      });
     } else {
       const msgDiv = document.createElement('div');
       msgDiv.className = 'w-full';
