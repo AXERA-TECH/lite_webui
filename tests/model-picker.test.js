@@ -52,3 +52,42 @@ describe('ModelPicker', () => {
     expect(picker.getModel()).toBe('');
   });
 });
+
+describe('ModelPicker – multi-endpoint', () => {
+  it('shows models from all configured endpoints', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'Local', baseUrl: 'http://local', apiKey: '' },
+      { id: 'ep2', name: 'Remote', baseUrl: 'http://remote', apiKey: '' },
+    ]);
+    store.saveAvailableModels('http://local', ['model-a']);
+    store.saveAvailableModels('http://remote', ['model-b']);
+
+    const picker = mountPicker();
+    const models = picker._getAllModels();
+    expect(models).toContain('model-a');
+    expect(models).toContain('model-b');
+  });
+
+  it('selecting a model from endpoint 2 updates the active endpoint', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'Local', baseUrl: 'http://local', apiKey: '' },
+      { id: 'ep2', name: 'Remote', baseUrl: 'http://remote', apiKey: '' },
+    ]);
+    store.saveAvailableModels('http://local', ['model-a']);
+    store.saveAvailableModels('http://remote', ['model-b']);
+    store.setActiveEndpointId('ep1');
+
+    const picker = mountPicker();
+    picker.setModel('model-b', 'ep2');
+
+    expect(store.getActiveEndpointId()).toBe('ep2');
+  });
+
+  it('single endpoint (via legacy settings) shows all models without grouping', () => {
+    store.saveSettings({ baseUrl: 'http://a.local' });
+    store.saveAvailableModels('http://a.local', ['model-x', 'model-y']);
+
+    const picker = mountPicker();
+    expect(picker._getAllModels()).toEqual(['model-x', 'model-y']);
+  });
+});

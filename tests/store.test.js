@@ -172,3 +172,69 @@ describe('store – updateMessage', () => {
     expect(msgs[0].content).toBe('hi'); // unchanged
   });
 });
+
+describe('store – endpoints', () => {
+  it('getEndpoints() auto-migrates from legacy settings when no endpoints saved', () => {
+    store.saveSettings({ baseUrl: 'http://example.com', apiKey: 'sk-test' });
+    const eps = store.getEndpoints();
+    expect(eps).toHaveLength(1);
+    expect(eps[0].baseUrl).toBe('http://example.com');
+    expect(eps[0].apiKey).toBe('sk-test');
+    expect(typeof eps[0].id).toBe('string');
+    expect(typeof eps[0].name).toBe('string');
+  });
+
+  it('saveEndpoints persists; getEndpoints returns saved endpoints', () => {
+    const endpoints = [
+      { id: 'ep1', name: 'Local', baseUrl: 'http://127.0.0.1:8000', apiKey: '' },
+      { id: 'ep2', name: 'OpenAI', baseUrl: 'https://api.openai.com', apiKey: 'sk-abc' },
+    ];
+    store.saveEndpoints(endpoints);
+    expect(store.getEndpoints()).toEqual(endpoints);
+  });
+
+  it('getEndpoints() always returns at least one endpoint', () => {
+    const eps = store.getEndpoints();
+    expect(eps.length).toBeGreaterThan(0);
+    expect(eps[0].baseUrl).toBeTruthy();
+  });
+
+  it('getActiveEndpointId defaults to first endpoint id when not set', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'A', baseUrl: 'http://a', apiKey: '' },
+      { id: 'ep2', name: 'B', baseUrl: 'http://b', apiKey: '' },
+    ]);
+    expect(store.getActiveEndpointId()).toBe('ep1');
+  });
+
+  it('setActiveEndpointId/getActiveEndpointId round-trip', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'A', baseUrl: 'http://a', apiKey: '' },
+      { id: 'ep2', name: 'B', baseUrl: 'http://b', apiKey: '' },
+    ]);
+    store.setActiveEndpointId('ep2');
+    expect(store.getActiveEndpointId()).toBe('ep2');
+  });
+
+  it('getActiveEndpoint returns correct endpoint object', () => {
+    const ep2 = { id: 'ep2', name: 'OpenAI', baseUrl: 'https://api.openai.com', apiKey: 'sk-x' };
+    store.saveEndpoints([
+      { id: 'ep1', name: 'Local', baseUrl: 'http://l', apiKey: '' },
+      ep2,
+    ]);
+    store.setActiveEndpointId('ep2');
+    expect(store.getActiveEndpoint()).toEqual(ep2);
+  });
+
+  it('getActiveEndpoint falls back to first endpoint if active id not found', () => {
+    const ep1 = { id: 'ep1', name: 'Only', baseUrl: 'http://o', apiKey: '' };
+    store.saveEndpoints([ep1]);
+    store.setActiveEndpointId('nonexistent-id');
+    expect(store.getActiveEndpoint()).toEqual(ep1);
+  });
+
+  it('saveEndpoints normalizes trailing slashes in baseUrls', () => {
+    store.saveEndpoints([{ id: 'ep1', name: 'A', baseUrl: 'http://a.local/', apiKey: '' }]);
+    expect(store.getEndpoints()[0].baseUrl).toBe('http://a.local');
+  });
+});

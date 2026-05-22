@@ -167,13 +167,12 @@ export class App {
     document.addEventListener('chat:regenerate', async (e) => {
       const { prompt, msgTimestamp } = e.detail;
       if (!prompt || !msgTimestamp) return;
-      const settings = store.getSettings();
       const model = this.modelPicker.getModel();
       if (!model) {
         this.chat.showError('Error: no model selected');
         return;
       }
-      await this._handleRegenerateTask({ originalTimestamp: msgTimestamp, model, settings, prompt });
+      await this._handleRegenerateTask({ originalTimestamp: msgTimestamp, model, prompt });
     });
 
     // Model change
@@ -188,7 +187,6 @@ export class App {
     });
 
     document.addEventListener('models:changed', () => {
-      this.modelPicker.setModels(store.getAvailableModels());
       this.inputBar.setModel(this.modelPicker.getModel());
       this._updateContextInfo();
     });
@@ -243,6 +241,7 @@ export class App {
 
   async _handleSend(text, image, video, audio, draw, seed = null) {
     const settings = store.getSettings();
+    const cfg = this._getApiConfig();
     const trimmedText = text.trim();
 
     // /clean — wipes both the API context and the visual chat display
@@ -281,7 +280,6 @@ export class App {
       await this._handleAudioTask({
         convId,
         model,
-        settings,
         instruction: trimmedText,
         audio,
       });
@@ -289,7 +287,7 @@ export class App {
     }
 
     if (draw && trimmedText) {
-      await this._handleDrawTask({ convId, model, settings, prompt: trimmedText, image, seed });
+      await this._handleDrawTask({ convId, model, prompt: trimmedText, image, seed });
       return;
     }
 
@@ -345,7 +343,7 @@ export class App {
     let started = false;
     let fullText = '';
     try {
-      for await (const chunk of streamCompletion(settings.baseUrl, settings.apiKey, model, apiMessages, { signal })) {
+      for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, { signal })) {
         if (!started) {
           this.chat.startAssistantMessage();
           started = true;
@@ -430,7 +428,7 @@ export class App {
     };
   }
 
-  async _handleDrawTask({ convId, model, settings, prompt, image = null, seed = null }) {
+  async _handleDrawTask({ convId, model, prompt, image = null, seed = null }) {
     const ts = new Date().toISOString();
     // Full message (with source image for img2img) kept in-memory only — never in localStorage.
     const userMessage = {
@@ -462,9 +460,10 @@ export class App {
 
     this._abortController = new AbortController();
     const { signal } = this._abortController;
+    const cfg = this._getApiConfig();
 
     try {
-      const result = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { image, seed, signal });
+      const result = await generateImage(cfg.baseUrl, cfg.apiKey, model, prompt, { image, seed, signal });
       if (!result.images.length) {
         throw new Error('No images returned — the model may not support image generation');
       }
@@ -501,17 +500,18 @@ export class App {
     }
   }
 
-  async _handleRegenerateTask({ originalTimestamp, model, settings, prompt }) {
+  async _handleRegenerateTask({ originalTimestamp, model, prompt }) {
     const originalMsg = this.chat.getMessageByTimestamp(originalTimestamp);
     this.chat.startRegeneratingMessage(originalTimestamp);
     this.inputBar.setSending(true);
 
     this._abortController = new AbortController();
     const { signal } = this._abortController;
+    const cfg = this._getApiConfig();
 
     try {
       const newSeed = Math.floor(Math.random() * 1_000_000_000);
-      const result = await generateImage(settings.baseUrl, settings.apiKey, model, prompt, { seed: newSeed, signal });
+      const result = await generateImage(cfg.baseUrl, cfg.apiKey, model, prompt, { seed: newSeed, signal });
       if (!result.images.length) throw new Error('No images returned — the model may not support image generation');
 
       const newMsg = {
@@ -546,7 +546,7 @@ export class App {
     }
   }
 
-  async _handleAudioTask({ convId, model, settings, instruction, audio }) {
+  async _handleAudioTask({ convId, model, instruction, audio }) {
     const userMessage = this._buildAudioUserMessage(audio, instruction);
     store.addMessage(convId, userMessage);
     this._pushSessionMsg(convId, userMessage);
@@ -565,10 +565,11 @@ export class App {
 
     this._abortController = new AbortController();
     const { signal } = this._abortController;
+    const cfg = this._getApiConfig();
 
     let fullText = '';
     try {
-      const transcript = await transcribeAudio(settings.baseUrl, settings.apiKey, model, audio.file, { signal });
+      const transcript = await transcribeAudio(cfg.baseUrl, cfg.apiKey, model, audio.file, { signal });
 
       if (!instruction) {
         this.chat.hideTypingIndicator();
@@ -607,7 +608,7 @@ export class App {
       this.chat.showSystemMessage('Audio transcribed — applying instruction');
       this.chat.startAssistantMessage();
 
-      for await (const chunk of streamCompletion(settings.baseUrl, settings.apiKey, model, apiMessages, { signal })) {
+      for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, { signal })) {
         fullText += chunk;
         this.chat.appendToAssistantMessage(chunk);
       }
@@ -647,8 +648,17 @@ export class App {
     }
   }
 
+  _getApiConfig() {
+    const ep = store.getActiveEndpoint();
+    const settings = store.getSettings();
+    return {
+      baseUrl: ep?.baseUrl || settings.baseUrl,
+      apiKey: ep?.apiKey ?? settings.apiKey,
+    };
+  }
+
   _initTheme() {
-    const saved = localStorage.getItem('theme') || 'dark';
+    const saved = localStorage.getItem('theme') || 'light';
     document.documentElement.classList.toggle('dark', saved === 'dark');
     this._updateThemeBtn();
   }

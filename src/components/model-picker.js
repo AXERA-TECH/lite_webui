@@ -7,7 +7,7 @@ export class ModelPicker {
     this.el = null;
     this.dropdownEl = null;
     this.open = false;
-    this._models = [];
+    this._endpointModels = [];
     this._currentModel = '';
   }
 
@@ -51,27 +51,39 @@ export class ModelPicker {
     }
 
     const userCaps = store.getModelCapabilities();
-    const items = allModels.map(modelId => {
-      const caps = getCapabilities(modelId, userCaps);
-      const active = modelId === this._currentModel;
-      const badges = [
-        caps.image ? '<span class="text-[11px] bg-[var(--c-hi)] text-[var(--c-tx3)] rounded-md px-1.5 py-0.5">Vision</span>' : '',
-        caps.audio ? '<span class="text-[11px] bg-[var(--c-hi)] text-[var(--c-tx3)] rounded-md px-1.5 py-0.5">Audio</span>' : '',
-      ].filter(Boolean).join('');
+    const multiEndpoint = this._endpointModels.filter(em => em.models.length > 0).length > 1;
 
-      return `
-        <button class="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-[13px] hover:bg-[var(--c-hi)] transition-all text-left ${active ? 'text-[var(--c-tx)] bg-[var(--c-hi)]' : 'text-[var(--c-tx2)]'}" role="option" aria-selected="${active}" data-model="${modelId}">
-          <span class="truncate">${modelId}</span>
-          <span class="flex items-center gap-1 flex-shrink-0">${badges}</span>
-        </button>
-      `;
-    });
+    const sections = this._endpointModels
+      .filter(em => em.models.length > 0)
+      .map(em => {
+        const header = multiEndpoint
+          ? `<div class="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--c-tx3)] border-b border-[var(--c-bd)] mb-0.5">${em.endpointName}</div>`
+          : '';
 
-    div.innerHTML = `<div class="overflow-y-auto max-h-64 py-1">${items.join('')}</div>`;
+        const items = em.models.map(modelId => {
+          const caps = getCapabilities(modelId, userCaps);
+          const active = modelId === this._currentModel;
+          const badges = [
+            caps.image ? '<span class="text-[11px] bg-[var(--c-hi)] text-[var(--c-tx3)] rounded-md px-1.5 py-0.5">Vision</span>' : '',
+            caps.audio ? '<span class="text-[11px] bg-[var(--c-hi)] text-[var(--c-tx3)] rounded-md px-1.5 py-0.5">Audio</span>' : '',
+          ].filter(Boolean).join('');
+
+          return `
+            <button class="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-[13px] hover:bg-[var(--c-hi)] transition-all text-left ${active ? 'text-[var(--c-tx)] bg-[var(--c-hi)]' : 'text-[var(--c-tx2)]'}" role="option" aria-selected="${active}" data-model="${modelId}" data-endpoint-id="${em.endpointId}">
+              <span class="truncate">${modelId}</span>
+              <span class="flex items-center gap-1 flex-shrink-0">${badges}</span>
+            </button>
+          `;
+        });
+
+        return header + items.join('');
+      });
+
+    div.innerHTML = `<div class="overflow-y-auto max-h-64 py-1">${sections.join('')}</div>`;
 
     div.querySelectorAll('[data-model]').forEach(btn => {
       btn.addEventListener('click', () => {
-        this.setModel(btn.dataset.model);
+        this.setModel(btn.dataset.model, btn.dataset.endpointId);
         this._closeDropdown();
       });
     });
@@ -80,7 +92,8 @@ export class ModelPicker {
   }
 
   _getAllModels() {
-    return [...new Set(this._models.filter(Boolean))].sort();
+    const all = this._endpointModels.flatMap(em => em.models);
+    return [...new Set(all.filter(Boolean))].sort();
   }
 
   _bindEvents() {
@@ -100,9 +113,18 @@ export class ModelPicker {
   }
 
   _syncFromStore() {
-    this._models = store.getAvailableModels();
-    const selected = store.getCurrentModel();
-    this._currentModel = this._models.includes(selected) ? selected : '';
+    const endpoints = store.getEndpoints();
+    this._endpointModels = endpoints.map(ep => ({
+      endpointId: ep.id,
+      endpointName: ep.name,
+      baseUrl: ep.baseUrl,
+      models: store.getAvailableModels(ep.baseUrl),
+    }));
+
+    const activeEp = store.getActiveEndpoint();
+    const selected = activeEp ? store.getCurrentModel(activeEp.baseUrl) : '';
+    const allModels = this._getAllModels();
+    this._currentModel = allModels.includes(selected) ? selected : '';
     this._updateButton();
   }
 
@@ -142,9 +164,19 @@ export class ModelPicker {
     }
   }
 
-  setModel(modelId) {
+  setModel(modelId, endpointId = null) {
     this._currentModel = modelId;
-    store.setCurrentModel(store.getSettings().baseUrl, modelId);
+    let targetEp = endpointId
+      ? this._endpointModels.find(em => em.endpointId === endpointId)
+      : this._endpointModels.find(em => em.models.includes(modelId));
+    if (!targetEp) targetEp = this._endpointModels[0];
+
+    if (targetEp) {
+      store.setActiveEndpointId(targetEp.endpointId);
+      store.setCurrentModel(targetEp.baseUrl, modelId);
+    } else {
+      store.setCurrentModel(store.getSettings().baseUrl, modelId);
+    }
     this._updateButton();
     document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: modelId } }));
   }
@@ -154,15 +186,28 @@ export class ModelPicker {
   }
 
   setModels(models) {
-    this._models = [...new Set((models || []).filter(Boolean))].sort();
-    const selected = store.getCurrentModel();
-    if (selected && !this._models.includes(selected)) {
+    const activeEp = store.getActiveEndpoint();
+    const activeId = activeEp?.id;
+    const idx = this._endpointModels.findIndex(em => em.endpointId === activeId);
+    const normalized = [...new Set((models || []).filter(Boolean))].sort();
+
+    if (idx >= 0) {
+      this._endpointModels[idx].models = normalized;
+    } else if (activeEp) {
+      this._endpointModels.push({ endpointId: activeEp.id, endpointName: activeEp.name, baseUrl: activeEp.baseUrl, models: normalized });
+    }
+
+    const allModels = this._getAllModels();
+    const baseUrl = activeEp?.baseUrl || store.getSettings().baseUrl;
+    const selected = store.getCurrentModel(baseUrl);
+    if (selected && !allModels.includes(selected)) {
       this._currentModel = '';
-      store.setCurrentModel(store.getSettings().baseUrl, '');
+      store.setCurrentModel(baseUrl, '');
       document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: '' } }));
     } else {
-      this._currentModel = this._models.includes(selected) ? selected : '';
+      this._currentModel = allModels.includes(selected) ? selected : '';
     }
+
     if (this.open) {
       this._closeDropdown();
       this._openDropdown();

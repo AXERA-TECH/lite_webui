@@ -6,6 +6,8 @@ const KEYS = {
   MODEL_CAPS: 'lw_model_caps',
   AVAILABLE_MODELS: 'lw_available_models',
   MODEL_SELECTIONS: 'lw_model_selections',
+  ENDPOINTS: 'lw_endpoints',
+  ACTIVE_ENDPOINT: 'lw_active_endpoint',
 };
 
 const DEFAULT_SETTINGS = {
@@ -160,6 +162,38 @@ export const store = {
     const nested = isLegacyCapabilityMap(raw) ? {} : raw;
     nested[normalizeBaseUrl(baseUrlOrCaps)] = maybeCaps;
     save(KEYS.MODEL_CAPS, nested);
+  },
+
+  getEndpoints() {
+    const saved = load(KEYS.ENDPOINTS, null);
+    if (Array.isArray(saved) && saved.length > 0) return saved;
+    const settings = this.getSettings();
+    return [{ id: 'default', name: 'Default', baseUrl: settings.baseUrl, apiKey: settings.apiKey }];
+  },
+
+  saveEndpoints(endpoints) {
+    if (!Array.isArray(endpoints) || endpoints.length === 0) return;
+    const normalized = endpoints.map(ep => ({
+      ...ep,
+      baseUrl: normalizeBaseUrl(ep.baseUrl),
+    }));
+    save(KEYS.ENDPOINTS, normalized);
+  },
+
+  getActiveEndpointId() {
+    const saved = localStorage.getItem(KEYS.ACTIVE_ENDPOINT);
+    if (saved) return saved;
+    return this.getEndpoints()[0]?.id || 'default';
+  },
+
+  setActiveEndpointId(id) {
+    localStorage.setItem(KEYS.ACTIVE_ENDPOINT, id);
+  },
+
+  getActiveEndpoint() {
+    const id = this.getActiveEndpointId();
+    const eps = this.getEndpoints();
+    return eps.find(ep => ep.id === id) || eps[0] || null;
   },
 
   createConversation(model) {

@@ -7,6 +7,10 @@ import {
 } from '../context.js';
 import { icon } from '../icons.js';
 
+function genId() {
+  return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 export class SettingsModal {
   constructor() {
     this.el = null;
@@ -35,16 +39,16 @@ export class SettingsModal {
           <div class="overflow-y-auto flex-1 px-5 py-4 space-y-6">
             <!-- API Config -->
             <section>
-              <h3 class="text-[var(--c-tx3)] font-medium text-sm mb-3 uppercase tracking-wide">API Configuration</h3>
-              <div class="space-y-3">
-                <div>
-                  <label class="block text-sm text-[var(--c-tx3)] mb-1" for="settings-base-url">API Base URL</label>
-                  <input id="settings-base-url" type="url" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="https://api.openai.com" />
-                </div>
-                <div>
-                  <label class="block text-sm text-[var(--c-tx3)] mb-1" for="settings-api-key">API Key</label>
-                  <input id="settings-api-key" type="password" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="sk-..." />
-                </div>
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-[var(--c-tx3)] font-medium text-sm uppercase tracking-wide">API Configuration</h3>
+                <button id="add-endpoint-btn" class="flex items-center gap-1 text-xs text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] rounded px-2.5 py-1 transition-colors">
+                  + Add Endpoint
+                </button>
+              </div>
+              <div id="endpoints-list" class="space-y-3">
+                <!-- Populated dynamically -->
+              </div>
+              <div class="mt-3 space-y-3">
                 <div>
                   <label class="block text-sm text-[var(--c-tx3)] mb-1" for="settings-context-limit">Max Context Tokens</label>
                   <input id="settings-context-limit" type="number" min="1024" step="1024" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="${DEFAULT_CONTEXT_LIMIT_TOKENS}" />
@@ -63,15 +67,36 @@ export class SettingsModal {
             <section>
               <div class="flex items-center justify-between mb-3">
                 <h3 class="text-[var(--c-tx3)] font-medium text-sm uppercase tracking-wide">Model Capabilities</h3>
-                <button id="fetch-models-btn" class="flex items-center gap-1.5 text-xs text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] rounded px-3 py-1.5 transition-colors">
-                  ${icon('refresh')} Fetch Models
-                </button>
               </div>
               <div id="model-caps-list" class="space-y-1">
                 <!-- Populated dynamically -->
               </div>
             </section>
           </div>
+        </div>
+      </div>
+    `;
+  }
+
+  _endpointCardHtml(ep) {
+    return `
+      <div class="endpoint-card border border-[var(--c-bd)] rounded-lg p-3 space-y-2 bg-[var(--c-sf)]" data-endpoint-id="${ep.id}">
+        <div class="flex items-center gap-2">
+          <input class="ep-name flex-1 bg-transparent border border-[var(--c-bd)] rounded px-2 py-1 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="Endpoint name" value="${ep.name || ''}" />
+          <button class="ep-fetch-btn flex items-center gap-1 text-xs text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] rounded px-2.5 py-1 transition-colors flex-shrink-0">
+            ${icon('refresh')} Fetch
+          </button>
+          <button class="ep-remove-btn text-[var(--c-tx3)] hover:text-red-400 transition-colors flex-shrink-0 p-1 rounded" aria-label="Remove endpoint">
+            ${icon('x')}
+          </button>
+        </div>
+        <div>
+          <label class="block text-xs text-[var(--c-tx3)] mb-1">API Base URL</label>
+          <input class="ep-url w-full bg-transparent border border-[var(--c-bd)] rounded px-2 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="url" placeholder="https://api.openai.com" value="${ep.baseUrl || ''}" />
+        </div>
+        <div>
+          <label class="block text-xs text-[var(--c-tx3)] mb-1">API Key</label>
+          <input class="ep-key w-full bg-transparent border border-[var(--c-bd)] rounded px-2 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="password" placeholder="sk-..." value="${ep.apiKey || ''}" />
         </div>
       </div>
     `;
@@ -92,27 +117,71 @@ export class SettingsModal {
     });
 
     this.el.querySelector('#settings-save').addEventListener('click', () => this._saveSettings());
-    this.el.querySelector('#fetch-models-btn').addEventListener('click', () => this._fetchModels());
+    this.el.querySelector('#add-endpoint-btn').addEventListener('click', () => this._addEndpoint());
 
-    // Load current values
     this._loadValues();
     this._renderModelCaps();
   }
 
   _loadValues() {
     const settings = store.getSettings();
-    this.el.querySelector('#settings-base-url').value = settings.baseUrl || '';
-    this.el.querySelector('#settings-api-key').value = settings.apiKey || '';
     this.el.querySelector('#settings-context-limit').value = settings.contextLimitTokens || '';
     this.el.querySelector('#settings-context-threshold').value =
       settings.contextResetThresholdPercent || DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
-    this._fetchedModels = store.getAvailableModels(settings.baseUrl);
+
+    this._renderEndpointCards();
+
+    const eps = store.getEndpoints();
+    this._fetchedModels = eps.flatMap(ep => store.getAvailableModels(ep.baseUrl));
+  }
+
+  _renderEndpointCards() {
+    const list = this.el.querySelector('#endpoints-list');
+    const eps = store.getEndpoints();
+    list.innerHTML = eps.map(ep => this._endpointCardHtml(ep)).join('');
+    this._bindEndpointCardEvents(list);
+  }
+
+  _bindEndpointCardEvents(container) {
+    container.querySelectorAll('.endpoint-card').forEach(card => {
+      const epId = card.dataset.endpointId;
+
+      card.querySelector('.ep-fetch-btn').addEventListener('click', () => this._fetchModels(epId));
+
+      const removeBtn = card.querySelector('.ep-remove-btn');
+      removeBtn.addEventListener('click', () => {
+        const eps = store.getEndpoints();
+        if (eps.length <= 1) return;
+        const filtered = eps.filter(e => e.id !== epId);
+        store.saveEndpoints(filtered);
+        if (store.getActiveEndpointId() === epId) {
+          store.setActiveEndpointId(filtered[0].id);
+        }
+        this._renderEndpointCards();
+        document.dispatchEvent(new CustomEvent('settings:changed'));
+        document.dispatchEvent(new CustomEvent('models:changed'));
+      });
+    });
+  }
+
+  _addEndpoint() {
+    const eps = store.getEndpoints();
+    const newEp = { id: genId(), name: `Endpoint ${eps.length + 1}`, baseUrl: '', apiKey: '' };
+    store.saveEndpoints([...eps, newEp]);
+    this._renderEndpointCards();
+  }
+
+  _readEndpointCards() {
+    const cards = this.el.querySelectorAll('.endpoint-card');
+    return Array.from(cards).map(card => ({
+      id: card.dataset.endpointId,
+      name: card.querySelector('.ep-name').value.trim() || 'Endpoint',
+      baseUrl: card.querySelector('.ep-url').value.trim() || 'http://127.0.0.1:8000',
+      apiKey: card.querySelector('.ep-key').value.trim(),
+    }));
   }
 
   _saveSettings() {
-    const previousBaseUrl = store.getSettings().baseUrl;
-    const baseUrl = this.el.querySelector('#settings-base-url').value.trim() || 'https://api.openai.com';
-    const apiKey = this.el.querySelector('#settings-api-key').value.trim();
     const rawContextLimit = this.el.querySelector('#settings-context-limit').value.trim();
     const contextLimitTokens = rawContextLimit
       ? Math.max(1024, Math.round(Number(rawContextLimit) || DEFAULT_CONTEXT_LIMIT_TOKENS))
@@ -122,24 +191,17 @@ export class SettingsModal {
       ? Math.min(95, Math.max(50, Math.round(rawThreshold)))
       : DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
 
+    const endpoints = this._readEndpointCards();
+    store.saveEndpoints(endpoints);
+
+    const activeEp = store.getActiveEndpoint();
     store.saveSettings({
       ...store.getSettings(),
-      baseUrl,
-      apiKey,
+      baseUrl: activeEp?.baseUrl || 'http://127.0.0.1:8000',
+      apiKey: activeEp?.apiKey || '',
       contextLimitTokens,
       contextResetThresholdPercent,
     });
-
-    this._fetchedModels = store.getAvailableModels(baseUrl);
-    const availableModels = store.getAvailableModels(baseUrl);
-    const currentModel = store.getCurrentModel(baseUrl);
-    if (previousBaseUrl !== baseUrl && !availableModels.length) {
-      store.setCurrentModel(baseUrl, '');
-      document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: '' } }));
-    } else if (currentModel && !availableModels.includes(currentModel)) {
-      store.setCurrentModel(baseUrl, '');
-      document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: '' } }));
-    }
 
     const btn = this.el.querySelector('#settings-save');
     btn.textContent = 'Saved!';
@@ -149,35 +211,61 @@ export class SettingsModal {
     document.dispatchEvent(new CustomEvent('models:changed'));
   }
 
-  async _fetchModels() {
-    const btn = this.el.querySelector('#fetch-models-btn');
-    const settings = store.getSettings();
-    btn.disabled = true;
-    btn.innerHTML = `<span class="opacity-60">Fetching...</span>`;
+  async _fetchModels(endpointId = null) {
+    const eps = store.getEndpoints();
+    let ep;
+    if (endpointId) {
+      const card = this.el?.querySelector(`.endpoint-card[data-endpoint-id="${endpointId}"]`);
+      if (card) {
+        ep = {
+          id: endpointId,
+          baseUrl: card.querySelector('.ep-url').value.trim() || 'http://127.0.0.1:8000',
+          apiKey: card.querySelector('.ep-key').value.trim(),
+        };
+      } else {
+        ep = eps.find(e => e.id === endpointId);
+      }
+    } else {
+      ep = store.getActiveEndpoint();
+    }
+    if (!ep) return;
+
+    const card = this.el?.querySelector(`.endpoint-card[data-endpoint-id="${ep.id}"]`);
+    const btn = card?.querySelector('.ep-fetch-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span class="opacity-60">Fetching...</span>`;
+    }
+
     try {
-      const models = await fetchModels(settings.baseUrl, settings.apiKey);
+      const models = await fetchModels(ep.baseUrl, ep.apiKey);
       this._fetchedModels = models;
-       store.saveAvailableModels(settings.baseUrl, models);
-       const currentModel = store.getCurrentModel(settings.baseUrl);
-       if (currentModel && !models.includes(currentModel)) {
-         store.setCurrentModel(settings.baseUrl, '');
-         document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: '' } }));
-       }
-      this._renderModelCaps(models);
+      store.saveAvailableModels(ep.baseUrl, models);
+      const currentModel = store.getCurrentModel(ep.baseUrl);
+      if (currentModel && !models.includes(currentModel)) {
+        store.setCurrentModel(ep.baseUrl, '');
+        document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: '' } }));
+      }
+      this._renderModelCaps();
       document.dispatchEvent(new CustomEvent('models:changed'));
     } catch (err) {
       this.el.querySelector('#model-caps-list').innerHTML =
         `<p class="text-sm text-red-400">Failed to fetch: ${err.message}</p>`;
     } finally {
-      btn.disabled = false;
-      btn.innerHTML = `${icon('refresh')} Fetch Models`;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `${icon('refresh')} Fetch`;
+      }
     }
   }
 
   _renderModelCaps(extraModels = []) {
     const container = this.el.querySelector('#model-caps-list');
     const userCaps = store.getModelCapabilities();
-    const allModelIds = new Set(extraModels);
+
+    const eps = store.getEndpoints();
+    const storedModels = eps.flatMap(ep => store.getAvailableModels(ep.baseUrl));
+    const allModelIds = new Set([...storedModels, ...extraModels]);
 
     const rows = [...allModelIds].sort().map(modelId => {
       const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false, imageGen: false };
@@ -206,7 +294,6 @@ export class SettingsModal {
 
     container.innerHTML = rows.join('') || '<p class="text-sm text-[var(--c-tx3)]">No models found. Fetch models or use defaults.</p>';
 
-    // Bind changes
     container.querySelectorAll('.cap-check').forEach(cb => {
       cb.addEventListener('change', () => this._saveCapChange(cb));
     });
