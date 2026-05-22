@@ -62,16 +62,6 @@ export class SettingsModal {
                 <button id="settings-save" class="bg-[var(--c-tx)] text-[var(--c-bg)] font-medium text-sm px-4 py-2 rounded hover:opacity-90 transition-opacity">Save Settings</button>
               </div>
             </section>
-
-            <!-- Model Capabilities -->
-            <section>
-              <div class="flex items-center justify-between mb-3">
-                <h3 class="text-[var(--c-tx3)] font-medium text-sm uppercase tracking-wide">Model Capabilities</h3>
-              </div>
-              <div id="model-caps-list" class="space-y-1">
-                <!-- Populated dynamically -->
-              </div>
-            </section>
           </div>
         </div>
       </div>
@@ -79,11 +69,13 @@ export class SettingsModal {
   }
 
   _endpointCardHtml(ep) {
+    const models = store.getAvailableModels(ep.baseUrl);
+    const modelsHtml = models.length ? this._inlineCapsHtml(ep.baseUrl, models) : '';
     return `
       <div class="endpoint-card border border-[var(--c-bd)] rounded-lg p-3 space-y-2 bg-[var(--c-sf)]" data-endpoint-id="${ep.id}">
         <div class="flex items-center gap-2">
           <input class="ep-name flex-1 bg-transparent border border-[var(--c-bd)] rounded px-2 py-1 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="Endpoint name" value="${ep.name || ''}" />
-          <button class="ep-fetch-btn flex items-center gap-1 text-xs text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] rounded px-2.5 py-1 transition-colors flex-shrink-0">
+          <button class="ep-fetch-btn flex items-center gap-1 text-xs text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] rounded px-2.5 py-1 transition-colors flex-shrink-0" title="Auto-saves this endpoint, then fetches its models">
             ${icon('refresh')} Fetch
           </button>
           <button class="ep-remove-btn text-[var(--c-tx3)] hover:text-red-400 transition-colors flex-shrink-0 p-1 rounded" aria-label="Remove endpoint">
@@ -98,6 +90,39 @@ export class SettingsModal {
           <label class="block text-xs text-[var(--c-tx3)] mb-1">API Key</label>
           <input class="ep-key w-full bg-transparent border border-[var(--c-bd)] rounded px-2 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="password" placeholder="sk-..." value="${ep.apiKey || ''}" />
         </div>
+        <div class="ep-models${models.length ? '' : ' hidden'}" data-ep-url="${ep.baseUrl || ''}">${modelsHtml}</div>
+      </div>
+    `;
+  }
+
+  /** Renders capability checkboxes for a list of models (scoped to baseUrl). */
+  _inlineCapsHtml(baseUrl, models) {
+    const userCaps = store.getModelCapabilities(baseUrl);
+    const rows = [...models].sort().map(modelId => {
+      const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false, imageGen: false };
+      const override = userCaps[modelId] || {};
+      const caps = { ...base, ...override };
+      return `
+        <div class="flex items-center justify-between py-1.5 border-b border-[var(--c-bd)] last:border-0 gap-2" data-model="${modelId}">
+          <span class="text-xs text-[var(--c-tx2)] truncate flex-1" title="${modelId}">${modelId}</span>
+          <div class="flex items-center gap-3 flex-shrink-0">
+            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
+              <input type="checkbox" class="cap-check accent-current" data-cap="image" ${caps.image ? 'checked' : ''} /> Vision
+            </label>
+            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
+              <input type="checkbox" class="cap-check accent-current" data-cap="audio" ${caps.audio ? 'checked' : ''} /> Audio
+            </label>
+            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
+              <input type="checkbox" class="cap-check accent-current" data-cap="imageGen" ${caps.imageGen ? 'checked' : ''} /> Draw
+            </label>
+          </div>
+        </div>
+      `;
+    });
+    return `
+      <div class="pt-2 border-t border-[var(--c-bd)]">
+        <p class="text-xs text-[var(--c-tx3)] mb-1.5">${models.length} model${models.length !== 1 ? 's' : ''} — set capabilities:</p>
+        ${rows.join('')}
       </div>
     `;
   }
@@ -120,7 +145,6 @@ export class SettingsModal {
     this.el.querySelector('#add-endpoint-btn').addEventListener('click', () => this._addEndpoint());
 
     this._loadValues();
-    this._renderModelCaps();
   }
 
   _loadValues() {
@@ -148,6 +172,9 @@ export class SettingsModal {
 
       card.querySelector('.ep-fetch-btn').addEventListener('click', () => this._fetchModels(epId));
 
+      // Bind any pre-existing capability checkboxes (from previously fetched models)
+      this._bindCapCheckboxes(card.querySelector('.ep-models'));
+
       const removeBtn = card.querySelector('.ep-remove-btn');
       removeBtn.addEventListener('click', () => {
         const eps = store.getEndpoints();
@@ -164,11 +191,37 @@ export class SettingsModal {
     });
   }
 
+  /** Binds capability checkbox change handlers within an ep-models container. */
+  _bindCapCheckboxes(container) {
+    if (!container) return;
+    container.querySelectorAll('.cap-check').forEach(cb => {
+      cb.addEventListener('change', () => this._saveCapChange(cb));
+    });
+  }
+
   _addEndpoint() {
     const eps = store.getEndpoints();
     const newEp = { id: genId(), name: `Endpoint ${eps.length + 1}`, baseUrl: '', apiKey: '' };
     store.saveEndpoints([...eps, newEp]);
     this._renderEndpointCards();
+  }
+
+  /** Reads one endpoint card's inputs and persists them to the store. Returns the updated endpoint object. */
+  _saveEndpointCard(card) {
+    const epId = card.dataset.endpointId;
+    const eps = store.getEndpoints();
+    const idx = eps.findIndex(e => e.id === epId);
+    const updated = {
+      id: epId,
+      name: card.querySelector('.ep-name').value.trim() || 'Endpoint',
+      baseUrl: card.querySelector('.ep-url').value.trim() || 'http://127.0.0.1:8000',
+      apiKey: card.querySelector('.ep-key').value.trim(),
+    };
+    if (idx >= 0) {
+      eps[idx] = updated;
+      store.saveEndpoints(eps);
+    }
+    return updated;
   }
 
   _readEndpointCards() {
@@ -212,25 +265,24 @@ export class SettingsModal {
   }
 
   async _fetchModels(endpointId = null) {
-    const eps = store.getEndpoints();
     let ep;
-    if (endpointId) {
-      const card = this.el?.querySelector(`.endpoint-card[data-endpoint-id="${endpointId}"]`);
-      if (card) {
-        ep = {
-          id: endpointId,
-          baseUrl: card.querySelector('.ep-url').value.trim() || 'http://127.0.0.1:8000',
-          apiKey: card.querySelector('.ep-key').value.trim(),
-        };
-      } else {
-        ep = eps.find(e => e.id === endpointId);
+    const card = endpointId
+      ? this.el?.querySelector(`.endpoint-card[data-endpoint-id="${endpointId}"]`)
+      : null;
+
+    if (card) {
+      // Auto-save this endpoint's inputs before fetching so the store stays in sync
+      ep = this._saveEndpointCard(card);
+      // Also keep the active settings baseUrl up to date if this is the active endpoint
+      const activeId = store.getActiveEndpointId();
+      if (!activeId || activeId === endpointId) {
+        store.saveSettings({ ...store.getSettings(), baseUrl: ep.baseUrl, apiKey: ep.apiKey });
       }
     } else {
       ep = store.getActiveEndpoint();
     }
     if (!ep) return;
 
-    const card = this.el?.querySelector(`.endpoint-card[data-endpoint-id="${ep.id}"]`);
     const btn = card?.querySelector('.ep-fetch-btn');
     if (btn) {
       btn.disabled = true;
@@ -239,18 +291,38 @@ export class SettingsModal {
 
     try {
       const models = await fetchModels(ep.baseUrl, ep.apiKey);
-      this._fetchedModels = models;
+      this._fetchedModels = [...new Set([...this._fetchedModels, ...models])];
       store.saveAvailableModels(ep.baseUrl, models);
       const currentModel = store.getCurrentModel(ep.baseUrl);
       if (currentModel && !models.includes(currentModel)) {
         store.setCurrentModel(ep.baseUrl, '');
         document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: '' } }));
       }
-      this._renderModelCaps();
+
+      // Update inline caps section in this card
+      if (card) {
+        const epModels = card.querySelector('.ep-models');
+        if (epModels) {
+          epModels.dataset.epUrl = ep.baseUrl;
+          epModels.innerHTML = this._inlineCapsHtml(ep.baseUrl, models);
+          epModels.classList.remove('hidden');
+          this._bindCapCheckboxes(epModels);
+          // Scroll the model list into view so user can see it immediately
+          if (typeof epModels.scrollIntoView === 'function') {
+            epModels.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+      }
+
       document.dispatchEvent(new CustomEvent('models:changed'));
     } catch (err) {
-      this.el.querySelector('#model-caps-list').innerHTML =
-        `<p class="text-sm text-red-400">Failed to fetch: ${err.message}</p>`;
+      if (card) {
+        const epModels = card.querySelector('.ep-models');
+        if (epModels) {
+          epModels.innerHTML = `<p class="text-xs text-red-400 pt-2 border-t border-[var(--c-bd)]">Failed to fetch: ${err.message}</p>`;
+          epModels.classList.remove('hidden');
+        }
+      }
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -259,64 +331,26 @@ export class SettingsModal {
     }
   }
 
-  _renderModelCaps(extraModels = []) {
-    const container = this.el.querySelector('#model-caps-list');
-    const userCaps = store.getModelCapabilities();
-
-    const eps = store.getEndpoints();
-    const storedModels = eps.flatMap(ep => store.getAvailableModels(ep.baseUrl));
-    const allModelIds = new Set([...storedModels, ...extraModels]);
-
-    const rows = [...allModelIds].sort().map(modelId => {
-      const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false, imageGen: false };
-      const override = userCaps[modelId] || {};
-      const caps = { ...base, ...override };
-      return `
-        <div class="flex items-center justify-between py-2 border-b border-[var(--c-bd)] gap-2" data-model="${modelId}">
-          <span class="text-sm text-[var(--c-tx2)] truncate flex-1">${modelId}</span>
-          <div class="flex items-center gap-3 flex-shrink-0">
-            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
-              <input type="checkbox" class="cap-check accent-current" data-cap="image" ${caps.image ? 'checked' : ''} />
-              Vision
-            </label>
-            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
-              <input type="checkbox" class="cap-check accent-current" data-cap="audio" ${caps.audio ? 'checked' : ''} />
-              Audio
-            </label>
-            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
-              <input type="checkbox" class="cap-check accent-current" data-cap="imageGen" ${caps.imageGen ? 'checked' : ''} />
-              Draw
-            </label>
-          </div>
-        </div>
-      `;
-    });
-
-    container.innerHTML = rows.join('') || '<p class="text-sm text-[var(--c-tx3)]">No models found. Fetch models or use defaults.</p>';
-
-    container.querySelectorAll('.cap-check').forEach(cb => {
-      cb.addEventListener('change', () => this._saveCapChange(cb));
-    });
-  }
-
   _saveCapChange(checkbox) {
     const row = checkbox.closest('[data-model]');
     const modelId = row.dataset.model;
     const cap = checkbox.dataset.cap;
-    const userCaps = store.getModelCapabilities();
+    // Get the baseUrl from the ep-models container (set at fetch time)
+    const epModels = checkbox.closest('[data-ep-url]');
+    const baseUrl = epModels?.dataset.epUrl || store.getSettings().baseUrl;
+    const userCaps = store.getModelCapabilities(baseUrl);
     if (!userCaps[modelId]) {
       const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false };
       userCaps[modelId] = { ...base };
     }
     userCaps[modelId][cap] = checkbox.checked;
-    store.saveModelCapabilities(store.getSettings().baseUrl, userCaps);
+    store.saveModelCapabilities(baseUrl, userCaps);
     document.dispatchEvent(new CustomEvent('caps:changed'));
   }
 
   show() {
     if (!this.el) return;
     this._loadValues();
-    this._renderModelCaps(this._fetchedModels);
     document.body.appendChild(this.el);
     this.visible = true;
   }

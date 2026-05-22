@@ -15,17 +15,19 @@ beforeEach(() => {
 });
 
 describe('SettingsModal', () => {
-  it('shows only fetched models for the configured endpoints', () => {
+  it('shows fetched models inline in their endpoint card', () => {
     store.saveEndpoints([{ id: 'ep1', name: 'Local', baseUrl: 'http://a.local', apiKey: '' }]);
     store.saveAvailableModels('http://a.local', ['model-a']);
     // model-b is from an unconfigured endpoint — should NOT appear
     store.saveAvailableModels('http://b.local', ['model-b']);
 
     const modal = mountModal();
-    const text = modal.el.querySelector('#model-caps-list').textContent;
+    // Models are shown inline in the endpoint card, not in a global list
+    const card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep1"]');
+    const epModels = card?.querySelector('.ep-models');
 
-    expect(text).toContain('model-a');
-    expect(text).not.toContain('model-b');
+    expect(epModels?.textContent).toContain('model-a');
+    expect(modal.el.textContent).not.toContain('model-b');
   });
 
   it('saves fetched models under the current endpoint baseUrl', async () => {
@@ -37,9 +39,50 @@ describe('SettingsModal', () => {
     });
 
     const modal = mountModal();
-    await modal._fetchModels();
+    await modal._fetchModels('ep1');
 
     expect(store.getAvailableModels('http://a.local')).toEqual(['model-a']);
+  });
+
+  it('auto-saves endpoint inputs before fetching (no manual Save required)', async () => {
+    store.saveEndpoints([{ id: 'ep1', name: 'Old Name', baseUrl: 'http://old.local', apiKey: '' }]);
+    store.setActiveEndpointId('ep1');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'model-x' }] }),
+    });
+
+    const modal = mountModal();
+    // User types a new URL without clicking Save
+    const card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep1"]');
+    card.querySelector('.ep-url').value = 'http://new.local';
+    card.querySelector('.ep-name').value = 'New Name';
+
+    await modal._fetchModels('ep1');
+
+    // The new URL/name should have been saved automatically
+    const savedEps = store.getEndpoints();
+    expect(savedEps[0].baseUrl).toBe('http://new.local');
+    expect(savedEps[0].name).toBe('New Name');
+    // Models fetched against the new URL
+    expect(store.getAvailableModels('http://new.local')).toEqual(['model-x']);
+  });
+
+  it('shows fetched models inline in card after fetch', async () => {
+    store.saveEndpoints([{ id: 'ep1', name: 'Local', baseUrl: 'http://a.local', apiKey: '' }]);
+    store.setActiveEndpointId('ep1');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'llama3' }] }),
+    });
+
+    const modal = mountModal();
+    await modal._fetchModels('ep1');
+
+    const card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep1"]');
+    const epModels = card?.querySelector('.ep-models');
+    expect(epModels?.classList.contains('hidden')).toBe(false);
+    expect(epModels?.textContent).toContain('llama3');
   });
 
   it('does not close when clicking inside the modal panel while editing inputs', () => {
