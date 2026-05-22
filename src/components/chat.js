@@ -169,7 +169,7 @@ export class Chat {
           <div class="max-w-[65%]">
             ${imageHtml}
             ${videoHtml}
-            <div class="user-bubble px-4 py-3 text-[13.5px] text-[var(--c-utx)] whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(text)}</div>
+            ${text ? `<div class="user-bubble px-4 py-3 text-[13.5px] text-[var(--c-utx)] whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(text)}</div>` : ''}
             ${time ? `<div class="text-[11px] text-[var(--c-tx3)] mt-1.5 text-right">${time}</div>` : ''}
           </div>
         </div>

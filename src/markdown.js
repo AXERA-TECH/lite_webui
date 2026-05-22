@@ -100,7 +100,9 @@ marked.setOptions({
 });
 
 // Enable KaTeX math rendering: $...$ for inline, $$...$$ for block.
-marked.use(markedKatex({ throwOnError: false, output: 'html' }));
+// nonStandard: true allows $ adjacent to punctuation (e.g. "($x$)") which the standard
+// mode skips due to its strict space/position requirements around delimiters.
+marked.use(markedKatex({ throwOnError: false, output: 'html', nonStandard: true }));
 
 /**
  * Wraps bare LaTeX command sequences (e.g. \underline{\text{...}}) in $...$ math delimiters
