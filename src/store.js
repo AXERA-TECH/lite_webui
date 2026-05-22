@@ -144,7 +144,7 @@ export const store = {
     save(KEYS.MODEL_SELECTIONS, selections);
   },
 
-  getModelCapabilities(baseUrl = this.getSettings().baseUrl) {
+  getModelCapabilities(baseUrl = (this.getActiveEndpoint()?.baseUrl || this.getSettings().baseUrl)) {
     const raw = load(KEYS.MODEL_CAPS, {});
     if (isLegacyCapabilityMap(raw)) return raw;
 

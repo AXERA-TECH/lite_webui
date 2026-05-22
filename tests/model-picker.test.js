@@ -90,4 +90,27 @@ describe('ModelPicker – multi-endpoint', () => {
     const picker = mountPicker();
     expect(picker._getAllModels()).toEqual(['model-x', 'model-y']);
   });
+
+  it('dropdown shows correct capability badges from each endpoint independently', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'Local', baseUrl: 'http://local', apiKey: '' },
+      { id: 'ep2', name: 'Remote', baseUrl: 'http://remote', apiKey: '' },
+    ]);
+    store.saveAvailableModels('http://local', ['model-a']);
+    store.saveAvailableModels('http://remote', ['model-b']);
+    store.saveModelCapabilities('http://local', { 'model-a': { text: true, image: true, audio: false, imageGen: false } });
+    store.saveModelCapabilities('http://remote', { 'model-b': { text: true, image: false, audio: true, imageGen: false } });
+
+    const picker = mountPicker();
+    picker._openDropdown();
+
+    const dropdown = picker.dropdownEl;
+    const buttons = [...dropdown.querySelectorAll('[data-model]')];
+    const modelABtn = buttons.find(b => b.dataset.model === 'model-a');
+    const modelBBtn = buttons.find(b => b.dataset.model === 'model-b');
+    expect(modelABtn?.innerHTML).toContain('Vision');
+    expect(modelABtn?.innerHTML).not.toContain('Audio');
+    expect(modelBBtn?.innerHTML).toContain('Audio');
+    expect(modelBBtn?.innerHTML).not.toContain('Vision');
+  });
 });

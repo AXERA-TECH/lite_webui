@@ -147,6 +147,23 @@ describe('store – model capabilities', () => {
     expect(store.getModelCapabilities('http://a.local')['model-a'].image).toBe(true);
     expect(store.getModelCapabilities('http://b.local')['model-a'].image).toBe(false);
   });
+
+  it('getModelCapabilities() with no args uses active endpoint baseUrl', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'A', baseUrl: 'http://a.local', apiKey: '' },
+      { id: 'ep2', name: 'B', baseUrl: 'http://b.local', apiKey: '' },
+    ]);
+    store.saveModelCapabilities('http://a.local', { 'model-a': { text: true, image: true, audio: false, imageGen: false } });
+    store.saveModelCapabilities('http://b.local', { 'model-b': { text: true, image: false, audio: true, imageGen: false } });
+
+    store.setActiveEndpointId('ep1');
+    expect(store.getModelCapabilities()['model-a']?.image).toBe(true);
+    expect(store.getModelCapabilities()['model-b']).toBeUndefined();
+
+    store.setActiveEndpointId('ep2');
+    expect(store.getModelCapabilities()['model-b']?.audio).toBe(true);
+    expect(store.getModelCapabilities()['model-a']).toBeUndefined();
+  });
 });
 
 describe('store – updateMessage', () => {

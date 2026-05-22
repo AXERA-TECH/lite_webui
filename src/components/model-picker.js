@@ -50,12 +50,12 @@ export class ModelPicker {
       return div;
     }
 
-    const userCaps = store.getModelCapabilities();
     const multiEndpoint = this._endpointModels.filter(em => em.models.length > 0).length > 1;
 
     const sections = this._endpointModels
       .filter(em => em.models.length > 0)
       .map(em => {
+        const userCaps = store.getModelCapabilities(em.baseUrl);
         const header = multiEndpoint
           ? `<div class="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--c-tx3)] border-b border-[var(--c-bd)] mb-0.5">${em.endpointName}</div>`
           : '';

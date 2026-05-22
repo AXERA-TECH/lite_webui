@@ -348,3 +348,47 @@ describe('InputBar – auto draw mode', () => {
     expect(bar._drawMode).toBe(false);
   });
 });
+
+describe('InputBar – multi-endpoint capability isolation', () => {
+  afterEach(() => {
+    store.saveModelCapabilities({});
+  });
+
+  it('activates correct buttons when switching to a model from a different endpoint', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'A', baseUrl: 'http://a.local', apiKey: '' },
+      { id: 'ep2', name: 'B', baseUrl: 'http://b.local', apiKey: '' },
+    ]);
+    // ep1 has an imageGen model, ep2 has a vision model
+    store.saveModelCapabilities('http://a.local', { 'gen-model': { text: true, image: false, audio: false, imageGen: true } });
+    store.saveModelCapabilities('http://b.local', { 'vis-model': { text: true, image: true, audio: false, imageGen: false } });
+
+    const bar = makeBar();
+
+    // Simulate user selecting vis-model from ep2 (model-picker sets active endpoint first)
+    store.setActiveEndpointId('ep2');
+    bar.setModel('vis-model');
+
+    const mediaBtn = bar.el.querySelector('#media-upload-btn');
+    const drawBtn = bar.el.querySelector('#draw-mode-btn');
+    // Vision button should be enabled (image=true on ep2), draw disabled (imageGen=false on ep2)
+    expect(mediaBtn.disabled).toBe(false);
+    expect(drawBtn.disabled).toBe(true);
+    expect(bar._drawMode).toBe(false);
+  });
+
+  it('auto-enables draw mode for imageGen model from non-default endpoint', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'A', baseUrl: 'http://a.local', apiKey: '' },
+      { id: 'ep2', name: 'B', baseUrl: 'http://b.local', apiKey: '' },
+    ]);
+    store.saveModelCapabilities('http://b.local', { 'flux-ep2': { text: true, image: false, audio: false, imageGen: true } });
+
+    const bar = makeBar();
+
+    store.setActiveEndpointId('ep2');
+    bar.setModel('flux-ep2');
+
+    expect(bar._drawMode).toBe(true);
+  });
+});
