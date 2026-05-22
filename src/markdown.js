@@ -123,12 +123,42 @@ function wrapBareLaTeX(text) {
   return result.join('');
 }
 
-/** Wraps \cmd{...} sequences (with up to 3 levels of nested braces) in $...$. */
+// LaTeX commands that ONLY appear in math mode — never in prose text.
+// Presence of these in a line is a strong signal that the whole line is math.
+const MATH_ONLY_CMDS_RE = /\\(?:frac|dfrac|tfrac|sum|int|oint|iint|iiint|prod|coprod|sqrt|binom|dbinom|tbinom|left|right|partial|nabla|infty|pm|mp|times|cdot|cdots|ldots|vdots|ddots|leq|geq|neq|approx|equiv|sim|simeq|propto|in|notin|subset|supset|subseteq|supseteq|cup|cap|bigcup|bigcap|forall|exists|nexists|emptyset|varnothing|lim|limsup|liminf|sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|log|ln|exp|det|deg|alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|varpi|rho|varrho|sigma|varsigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega)\b/;
+
+/**
+ * Wraps \cmd{...} sequences (with up to 3 levels of nested braces) in $...$.
+ *
+ * Enhanced: if a line contains math-only commands AND has no English prose words
+ * (3+ consecutive letters not part of a LaTeX command name), the ENTIRE line is
+ * wrapped as one math expression. This handles OCR-style compact expressions like
+ * "(A_{n}=a_{0}\left[1+\frac{3}{4}\sum_{k=1}^{n}...]" which contain \left, \sum, etc.
+ * that don't directly follow with braces and so wouldn't be caught by the fragment regex.
+ */
 function _wrapLatexCmds(text) {
-  return text.replace(
-    /\\[a-zA-Z]+(?:\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})+/g,
-    match => `$${match}$`,
-  );
+  return text.replace(/[^\n]+/g, line => {
+    if (!line.includes('\\')) return line;
+
+    if (MATH_ONLY_CMDS_RE.test(line)) {
+      // Strip all LaTeX command names (e.g. \frac → removed), then check for prose
+      const stripped = line.replace(/\\[a-zA-Z]+/g, '');
+      // Prose words: 3+ consecutive letters (not inside a LaTeX command name)
+      const proseWords = stripped.match(/[a-zA-Z]{3,}/g) || [];
+      if (proseWords.length === 0) {
+        // Math-dense line — wrap the whole trimmed line as a single expression
+        const trimmed = line.trim();
+        const indent = line.slice(0, line.length - line.trimStart().length);
+        return `${indent}$${trimmed}$`;
+      }
+    }
+
+    // Fragment wrapping: wrap individual \cmd{...}{...} patterns
+    return line.replace(
+      /\\[a-zA-Z]+(?:\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})+/g,
+      match => `$${match}$`,
+    );
+  });
 }
 
 export function renderMarkdown(text) {
