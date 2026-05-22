@@ -8,7 +8,9 @@ It runs entirely in the browser, supports streaming responses, and stores conver
 
 The clip below shows SD 1.5 text-to-image and image-to-image generation, then PaddleOCR performing OCR on an uploaded image — all from the same interface without any page reload or configuration change.
 
-<video src="assets/lite_webui_sd1.5_ocr_demo.mov" controls width="100%"></video>
+<video src="https://github.com/AXERA-TECH/lite_webui/raw/main/assets/lite_webui_sd1.5_ocr_demo.mov" controls width="100%"></video>
+
+> If the video does not play inline, [click here to download / view it](https://github.com/AXERA-TECH/lite_webui/raw/main/assets/lite_webui_sd1.5_ocr_demo.mov).
 
 ## Features
 
