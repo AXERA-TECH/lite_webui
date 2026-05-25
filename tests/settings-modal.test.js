@@ -144,4 +144,72 @@ describe('SettingsModal', () => {
     const cards = modal.el.querySelectorAll('.endpoint-card');
     expect(cards).toHaveLength(2);
   });
+
+  it('Set Active button switches the active endpoint and re-renders', () => {
+    store.saveEndpoints([
+      { id: 'ep1', name: 'Local', baseUrl: 'http://a.local', apiKey: '' },
+      { id: 'ep2', name: 'Remote', baseUrl: 'http://b.remote', apiKey: 'sk-xyz' },
+    ]);
+    store.setActiveEndpointId('ep1');
+
+    const modal = mountModal();
+    // ep2 card should have a "Use" button (not active)
+    const ep2Card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep2"]');
+    const useBtn = ep2Card.querySelector('.ep-set-active-btn');
+    expect(useBtn).not.toBeNull();
+    expect(useBtn.textContent).toBe('Use');
+
+    useBtn.click();
+
+    expect(store.getActiveEndpointId()).toBe('ep2');
+    // ep2 card should now show "Active" badge
+    const ep2CardAfter = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep2"]');
+    expect(ep2CardAfter.textContent).toContain('Active');
+    expect(ep2CardAfter.querySelector('.ep-set-active-btn')).toBeNull();
+  });
+
+  it('API key toggle changes input type between password and text', () => {
+    store.saveEndpoints([{ id: 'ep1', name: 'Local', baseUrl: 'http://a.local', apiKey: 'sk-abc' }]);
+
+    const modal = mountModal();
+    const card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep1"]');
+    const keyInput = card.querySelector('.ep-key');
+    const toggleBtn = card.querySelector('.ep-key-toggle');
+
+    expect(keyInput.type).toBe('password');
+    toggleBtn.click();
+    expect(keyInput.type).toBe('text');
+    toggleBtn.click();
+    expect(keyInput.type).toBe('password');
+  });
+
+  it('name header display updates live as user types in name input', () => {
+    store.saveEndpoints([{ id: 'ep1', name: 'Old Name', baseUrl: 'http://a.local', apiKey: '' }]);
+
+    const modal = mountModal();
+    const card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep1"]');
+    const nameInput = card.querySelector('.ep-name');
+    const nameDisplay = card.querySelector('.ep-name-display');
+
+    nameInput.value = 'New Display Name';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(nameDisplay.textContent).toBe('New Display Name');
+  });
+
+  it('fetch status shows model count after successful fetch', async () => {
+    store.saveEndpoints([{ id: 'ep1', name: 'Local', baseUrl: 'http://a.local', apiKey: '' }]);
+    store.setActiveEndpointId('ep1');
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'model-a' }, { id: 'model-b' }] }),
+    });
+
+    const modal = mountModal();
+    await modal._fetchModels('ep1');
+
+    const card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep1"]');
+    const statusEl = card.querySelector('.ep-fetch-status');
+    expect(statusEl.textContent).toBe('2 models loaded');
+  });
 });

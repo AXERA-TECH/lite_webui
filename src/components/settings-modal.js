@@ -28,38 +28,38 @@ export class SettingsModal {
 
   _template() {
     return `
-      <div class="modal-backdrop fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 pb-8" style="background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);">
-        <div class="modal-panel bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl">
+      <div class="modal-backdrop fixed inset-0 z-50 flex items-start justify-center pt-12 px-4 pb-8" style="background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);">
+        <div class="modal-panel bg-[var(--c-card)] border border-[var(--c-bd)] rounded-xl w-full max-w-lg max-h-[84vh] flex flex-col shadow-2xl">
           <div class="flex items-center justify-between px-5 py-4 border-b border-[var(--c-bd)] flex-shrink-0">
             <h2 class="text-[var(--c-tx)] font-semibold text-base">Settings</h2>
             <button id="settings-close" class="text-[var(--c-tx3)] hover:text-[var(--c-tx)] transition-colors p-1 rounded" aria-label="Close settings">
               ${icon('x')}
             </button>
           </div>
-          <div class="overflow-y-auto flex-1 px-5 py-4 space-y-6">
-            <!-- API Config -->
+          <div class="overflow-y-auto flex-1 px-5 py-5 space-y-7">
+            <!-- API Endpoints -->
             <section>
-              <div class="flex items-center justify-between mb-3">
-                <h3 class="text-[var(--c-tx3)] font-medium text-sm uppercase tracking-wide">API Configuration</h3>
-                <button id="add-endpoint-btn" class="flex items-center gap-1 text-xs text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] rounded px-2.5 py-1 transition-colors">
-                  + Add Endpoint
-                </button>
-              </div>
-              <div id="endpoints-list" class="space-y-3">
-                <!-- Populated dynamically -->
-              </div>
-              <div class="mt-3 space-y-3">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">API Endpoints</h3>
+              <div id="endpoints-list" class="space-y-2.5"></div>
+              <button id="add-endpoint-btn" class="mt-3 w-full flex items-center justify-center gap-1.5 text-sm text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-dashed border-[var(--c-bd)] hover:border-[var(--c-bd-hi)] rounded-xl py-2.5 transition-colors">
+                ${icon('plus')} Add Endpoint
+              </button>
+            </section>
+            <!-- Context Window -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Context Window</h3>
+              <div class="space-y-3">
                 <div>
-                  <label class="block text-sm text-[var(--c-tx3)] mb-1" for="settings-context-limit">Max Context Tokens</label>
-                  <input id="settings-context-limit" type="number" min="1024" step="1024" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="${DEFAULT_CONTEXT_LIMIT_TOKENS}" />
-                  <p class="mt-1 text-xs text-[var(--c-tx3)]">This value is used directly for the context badge and auto-reset logic. For on-device models, set the exact limit here.</p>
+                  <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-context-limit">Max Context Tokens</label>
+                  <input id="settings-context-limit" type="number" min="1024" step="1024" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="${DEFAULT_CONTEXT_LIMIT_TOKENS}" />
+                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Used for the context badge and auto-reset logic.</p>
                 </div>
                 <div>
-                  <label class="block text-sm text-[var(--c-tx3)] mb-1" for="settings-context-threshold">Auto-reset Threshold (%)</label>
-                  <input id="settings-context-threshold" type="number" min="50" max="95" step="1" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="${DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT}" />
-                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Resets the API context before a send when estimated usage reaches this percentage of the configured window.</p>
+                  <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-context-threshold">Auto-reset Threshold (%)</label>
+                  <input id="settings-context-threshold" type="number" min="50" max="95" step="1" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="${DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT}" />
+                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Resets API context when usage reaches this % of the configured window.</p>
                 </div>
-                <button id="settings-save" class="bg-[var(--c-tx)] text-[var(--c-bg)] font-medium text-sm px-4 py-2 rounded hover:opacity-90 transition-opacity">Save Settings</button>
+                <button id="settings-save" class="bg-[var(--c-tx)] text-[var(--c-bg)] font-medium text-sm px-4 py-2 rounded-lg hover:opacity-90 transition-opacity">Save Settings</button>
               </div>
             </section>
           </div>
@@ -71,26 +71,56 @@ export class SettingsModal {
   _endpointCardHtml(ep) {
     const models = store.getAvailableModels(ep.baseUrl);
     const modelsHtml = models.length ? this._inlineCapsHtml(ep.baseUrl, models) : '';
+    const isActive = store.getActiveEndpointId() === ep.id;
+    const canRemove = store.getEndpoints().length > 1;
+    const statusText = models.length ? `${models.length} model${models.length !== 1 ? 's' : ''} loaded` : '';
+
+    const activeBadge = isActive
+      ? `<span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 font-medium flex-shrink-0 select-none">Active</span>`
+      : `<button class="ep-set-active-btn text-[11px] px-2 py-0.5 rounded-full border border-[var(--c-bd)] text-[var(--c-tx3)] hover:border-[var(--c-bd-hi)] hover:text-[var(--c-tx)] transition-colors flex-shrink-0">Use</button>`;
+
+    const removeBtn = canRemove
+      ? `<button class="ep-remove-btn text-[var(--c-tx3)] hover:text-red-400 transition-colors p-1 rounded flex-shrink-0" aria-label="Remove endpoint">${icon('trash')}</button>`
+      : '';
+
+    const borderClass = isActive ? 'border-[var(--c-bd-hi)]' : 'border-[var(--c-bd)]';
+
     return `
-      <div class="endpoint-card border border-[var(--c-bd)] rounded-lg p-3 space-y-2 bg-[var(--c-sf)]" data-endpoint-id="${ep.id}">
-        <div class="flex items-center gap-2">
-          <input class="ep-name flex-1 bg-transparent border border-[var(--c-bd)] rounded px-2 py-1 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="Endpoint name" value="${ep.name || ''}" />
-          <button class="ep-fetch-btn flex items-center gap-1 text-xs text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] rounded px-2.5 py-1 transition-colors flex-shrink-0" title="Auto-saves this endpoint, then fetches its models">
-            ${icon('refresh')} Fetch
-          </button>
-          <button class="ep-remove-btn text-[var(--c-tx3)] hover:text-red-400 transition-colors flex-shrink-0 p-1 rounded" aria-label="Remove endpoint">
-            ${icon('x')}
-          </button>
+      <div class="endpoint-card border ${borderClass} rounded-xl overflow-hidden" data-endpoint-id="${ep.id}">
+        <div class="flex items-center gap-2 px-3 py-2.5 bg-[var(--c-sf)]">
+          <span class="w-2 h-2 rounded-full flex-shrink-0 transition-colors ${isActive ? 'bg-emerald-400' : 'bg-[var(--c-tx3)] opacity-30'}"></span>
+          <span class="ep-name-display flex-1 text-sm font-medium text-[var(--c-tx)] truncate min-w-0">${ep.name || ep.baseUrl || 'New Endpoint'}</span>
+          ${activeBadge}
+          ${removeBtn}
         </div>
-        <div>
-          <label class="block text-xs text-[var(--c-tx3)] mb-1">API Base URL</label>
-          <input class="ep-url w-full bg-transparent border border-[var(--c-bd)] rounded px-2 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="url" placeholder="https://api.openai.com" value="${ep.baseUrl || ''}" />
+        <div class="px-3.5 py-3 space-y-3 border-t border-[var(--c-bd)]">
+          <div>
+            <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">Name</label>
+            <input class="ep-name w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="My Local Server" value="${ep.name || ''}" />
+          </div>
+          <div>
+            <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">API Base URL</label>
+            <input class="ep-url w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="url" placeholder="http://127.0.0.1:8000" value="${ep.baseUrl || ''}" />
+          </div>
+          <div>
+            <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">
+              API Key <span class="normal-case font-normal opacity-60 tracking-normal">optional</span>
+            </label>
+            <div class="relative">
+              <input class="ep-key w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 pr-9 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="password" placeholder="sk-… (leave blank for local servers)" value="${ep.apiKey || ''}" />
+              <button class="ep-key-toggle absolute right-2 top-1/2 -translate-y-1/2 text-[var(--c-tx3)] hover:text-[var(--c-tx)] transition-colors p-0.5 rounded" type="button" tabindex="-1" aria-label="Toggle API key visibility">
+                ${icon('eye')}
+              </button>
+            </div>
+          </div>
+          <div class="flex items-center justify-between gap-3 pt-0.5">
+            <button class="ep-fetch-btn flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-[var(--c-bd)] text-[var(--c-tx)] hover:border-[var(--c-bd-hi)] hover:bg-[var(--c-sf)] transition-colors" title="Auto-saves this endpoint and fetches its models">
+              ${icon('refresh')} Fetch Models
+            </button>
+            <span class="ep-fetch-status text-xs text-[var(--c-tx3)] flex-shrink-0">${statusText}</span>
+          </div>
+          <div class="ep-models${models.length ? '' : ' hidden'}" data-ep-url="${ep.baseUrl || ''}">${modelsHtml}</div>
         </div>
-        <div>
-          <label class="block text-xs text-[var(--c-tx3)] mb-1">API Key</label>
-          <input class="ep-key w-full bg-transparent border border-[var(--c-bd)] rounded px-2 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="password" placeholder="sk-..." value="${ep.apiKey || ''}" />
-        </div>
-        <div class="ep-models${models.length ? '' : ' hidden'}" data-ep-url="${ep.baseUrl || ''}">${modelsHtml}</div>
       </div>
     `;
   }
@@ -172,22 +202,56 @@ export class SettingsModal {
 
       card.querySelector('.ep-fetch-btn').addEventListener('click', () => this._fetchModels(epId));
 
+      // Live-update header name display as user types
+      const nameInput = card.querySelector('.ep-name');
+      const nameDisplay = card.querySelector('.ep-name-display');
+      if (nameInput && nameDisplay) {
+        nameInput.addEventListener('input', () => {
+          const urlInput = card.querySelector('.ep-url');
+          nameDisplay.textContent = nameInput.value.trim() || urlInput?.value.trim() || 'New Endpoint';
+        });
+      }
+
+      // API key show/hide toggle
+      const keyInput = card.querySelector('.ep-key');
+      const keyToggle = card.querySelector('.ep-key-toggle');
+      if (keyInput && keyToggle) {
+        keyToggle.addEventListener('click', () => {
+          const isHidden = keyInput.type === 'password';
+          keyInput.type = isHidden ? 'text' : 'password';
+          keyToggle.innerHTML = icon(isHidden ? 'eyeOff' : 'eye');
+        });
+      }
+
+      // Set as active endpoint
+      const setActiveBtn = card.querySelector('.ep-set-active-btn');
+      if (setActiveBtn) {
+        setActiveBtn.addEventListener('click', () => {
+          this._saveEndpointCard(card);
+          store.setActiveEndpointId(epId);
+          this._renderEndpointCards();
+          document.dispatchEvent(new CustomEvent('settings:changed'));
+        });
+      }
+
       // Bind any pre-existing capability checkboxes (from previously fetched models)
       this._bindCapCheckboxes(card.querySelector('.ep-models'));
 
       const removeBtn = card.querySelector('.ep-remove-btn');
-      removeBtn.addEventListener('click', () => {
-        const eps = store.getEndpoints();
-        if (eps.length <= 1) return;
-        const filtered = eps.filter(e => e.id !== epId);
-        store.saveEndpoints(filtered);
-        if (store.getActiveEndpointId() === epId) {
-          store.setActiveEndpointId(filtered[0].id);
-        }
-        this._renderEndpointCards();
-        document.dispatchEvent(new CustomEvent('settings:changed'));
-        document.dispatchEvent(new CustomEvent('models:changed'));
-      });
+      if (removeBtn) {
+        removeBtn.addEventListener('click', () => {
+          const eps = store.getEndpoints();
+          if (eps.length <= 1) return;
+          const filtered = eps.filter(e => e.id !== epId);
+          store.saveEndpoints(filtered);
+          if (store.getActiveEndpointId() === epId) {
+            store.setActiveEndpointId(filtered[0].id);
+          }
+          this._renderEndpointCards();
+          document.dispatchEvent(new CustomEvent('settings:changed'));
+          document.dispatchEvent(new CustomEvent('models:changed'));
+        });
+      }
     });
   }
 
@@ -286,7 +350,7 @@ export class SettingsModal {
     const btn = card?.querySelector('.ep-fetch-btn');
     if (btn) {
       btn.disabled = true;
-      btn.innerHTML = `<span class="opacity-60">Fetching...</span>`;
+      btn.innerHTML = `<span class="opacity-60">Fetching…</span>`;
     }
 
     try {
@@ -307,10 +371,14 @@ export class SettingsModal {
           epModels.innerHTML = this._inlineCapsHtml(ep.baseUrl, models);
           epModels.classList.remove('hidden');
           this._bindCapCheckboxes(epModels);
-          // Scroll the model list into view so user can see it immediately
           if (typeof epModels.scrollIntoView === 'function') {
             epModels.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
+        }
+        // Update status text
+        const statusEl = card.querySelector('.ep-fetch-status');
+        if (statusEl) {
+          statusEl.textContent = `${models.length} model${models.length !== 1 ? 's' : ''} loaded`;
         }
       }
 
@@ -326,7 +394,7 @@ export class SettingsModal {
     } finally {
       if (btn) {
         btn.disabled = false;
-        btn.innerHTML = `${icon('refresh')} Fetch`;
+        btn.innerHTML = `${icon('refresh')} Fetch Models`;
       }
     }
   }
