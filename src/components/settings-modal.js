@@ -39,11 +39,13 @@ export class SettingsModal {
           <div class="overflow-y-auto flex-1 px-5 py-5 space-y-7">
             <!-- API Endpoints -->
             <section>
-              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">API Endpoints</h3>
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest">API Endpoints</h3>
+                <button id="add-endpoint-btn" class="flex items-center gap-1 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-[var(--c-bd)] hover:border-[var(--c-bd-hi)] rounded-lg px-2.5 py-1 transition-colors" title="Add new endpoint">
+                  ${icon('plus')} Add
+                </button>
+              </div>
               <div id="endpoints-list" class="space-y-2.5"></div>
-              <button id="add-endpoint-btn" class="mt-3 w-full flex items-center justify-center gap-1.5 text-sm text-[var(--c-tx3)] hover:text-[var(--c-tx)] border border-dashed border-[var(--c-bd)] hover:border-[var(--c-bd-hi)] rounded-xl py-2.5 transition-colors">
-                ${icon('plus')} Add Endpoint
-              </button>
             </section>
             <!-- Context Window -->
             <section class="border-t border-[var(--c-bd)] pt-6">
@@ -268,6 +270,12 @@ export class SettingsModal {
     const newEp = { id: genId(), name: `Endpoint ${eps.length + 1}`, baseUrl: '', apiKey: '' };
     store.saveEndpoints([...eps, newEp]);
     this._renderEndpointCards();
+    // Scroll new card into view so the user can immediately start editing it
+    const list = this.el.querySelector('#endpoints-list');
+    const newCard = list?.lastElementChild;
+    if (newCard && typeof newCard.scrollIntoView === 'function') {
+      newCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
   }
 
   /** Reads one endpoint card's inputs and persists them to the store. Returns the updated endpoint object. */
