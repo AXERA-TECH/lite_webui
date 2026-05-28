@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderMarkdown } from '../src/markdown.js';
+import { renderMarkdown, fixLiteralEscapes } from '../src/markdown.js';
 
 // Helper: does the output contain rendered KaTeX HTML (not raw LaTeX)?
 function isKatexRendered(html) {
@@ -110,5 +110,72 @@ describe('renderMarkdown – LaTeX rendering', () => {
     const input = 'First: \\(a^2\\) and second: \\(b^2\\). Sum: \\(a^2 + b^2\\).';
     const html = renderMarkdown(input);
     expect(isKatexRendered(html)).toBe(true);
+  });
+});
+
+describe('fixLiteralEscapes', () => {
+  it('converts literal \\n (backslash+n) to a real newline', () => {
+    // "\\n" in the JS source is a two-char string: \ followed by n
+    const result = fixLiteralEscapes('hello\\nworld');
+    expect(result).toBe('hello\nworld');
+  });
+
+  it('converts literal \\t to a real tab', () => {
+    const result = fixLiteralEscapes('col1\\tcol2');
+    expect(result).toBe('col1\tcol2');
+  });
+
+  it('converts multiple literal \\n\\n sequences', () => {
+    const result = fixLiteralEscapes('para1\\n\\npara2\\n\\npara3');
+    expect(result).toBe('para1\n\npara2\n\npara3');
+  });
+
+  it('preserves literal \\n inside a backtick code span', () => {
+    const result = fixLiteralEscapes('use `\\n` to escape');
+    // The \n inside the code span must stay as backslash+n
+    expect(result).toContain('`\\n`');
+  });
+
+  it('preserves literal \\n inside a fenced code block', () => {
+    const result = fixLiteralEscapes('```\nprint("\\n")\n```');
+    expect(result).toContain('"\\n"');
+  });
+
+  it('converts \\n outside code block but not inside', () => {
+    const input = 'before\\n```\ncode\\n\n```\\nafter';
+    const result = fixLiteralEscapes(input);
+    // Outside code: converted
+    expect(result.startsWith('before\n')).toBe(true);
+    expect(result.endsWith('\nafter')).toBe(true);
+    // Inside code block: preserved
+    expect(result).toContain('code\\n');
+  });
+
+  it('returns the original string unchanged when there are no literal escapes', () => {
+    const input = 'hello\nworld';
+    expect(fixLiteralEscapes(input)).toBe(input);
+  });
+});
+
+describe('renderMarkdown – literal escape sequences from backends', () => {
+  it('renders paragraphs when model returns literal \\n\\n (double-escaped JSON)', () => {
+    // Some backends double-encode the JSON so real newlines become backslash+n
+    const input = '第一段文字。\\n\\n第二段文字。';
+    const html = renderMarkdown(input);
+    // Should produce paragraph tags (not display raw \n\n as text)
+    expect(html).toMatch(/<p>/);
+    expect(html).not.toContain('\\n');
+  });
+
+  it('renders a numbered list when items separated by literal \\n', () => {
+    const input = '1. Item one\\n2. Item two\\n3. Item three';
+    const html = renderMarkdown(input);
+    expect(html).toMatch(/<ol|<li/);
+  });
+
+  it('preserves literal \\n inside an inline code span even after renderMarkdown', () => {
+    const input = 'In shell: `echo \\n` is a literal.';
+    const html = renderMarkdown(input);
+    expect(html).toContain('\\n');
   });
 });

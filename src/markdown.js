@@ -105,6 +105,33 @@ marked.setOptions({
 marked.use(markedKatex({ throwOnError: false, output: 'html', nonStandard: true }));
 
 /**
+ * Converts literal \n and \t two-character escape sequences to real whitespace.
+ * Some backends double-encode their JSON payloads so that a real newline arrives
+ * as the two-character sequence backslash + n rather than a single newline char.
+ * marked treats those two characters as prose, so paragraphs never break.
+ * Code spans and fenced code blocks are left untouched so that intentional
+ * escape-sequence examples (e.g. "use \\n to escape") are preserved.
+ */
+export function fixLiteralEscapes(text) {
+  if (!text.includes('\\n') && !text.includes('\\t')) return text;
+  const result = [];
+  const protectedRe = /`{3}[\s\S]*?`{3}|`[^`\n]*`/g;
+  let last = 0;
+  let m;
+  while ((m = protectedRe.exec(text)) !== null) {
+    if (m.index > last) {
+      result.push(text.slice(last, m.index).replace(/\\n/g, '\n').replace(/\\t/g, '\t'));
+    }
+    result.push(m[0]);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) {
+    result.push(text.slice(last).replace(/\\n/g, '\n').replace(/\\t/g, '\t'));
+  }
+  return result.join('');
+}
+
+/**
  * Converts \(...\) and \[...\] LaTeX math delimiters to $...$ and $$...$$
  * so marked-katex-extension can render them.
  * These forms are commonly output by LLMs and OCR models.
@@ -176,7 +203,8 @@ function _wrapLatexCmds(text) {
 export function renderMarkdown(text) {
   if (!text) return '';
   try {
-    return marked.parse(String(wrapBareLaTeX(convertAltMathDelimiters(String(text)))));
+    const s = fixLiteralEscapes(String(text));
+    return marked.parse(String(wrapBareLaTeX(convertAltMathDelimiters(s))));
   } catch {
     return escapeHtml(String(text));
   }

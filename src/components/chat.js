@@ -239,6 +239,32 @@ export class Chat {
           dlBtn.title = 'Download image';
           dlBtn.addEventListener('click', () => {
             const filename = `generated-${idx + 1}.png`;
+            const triggerDownload = (blob) => {
+              const objectUrl = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = objectUrl;
+              a.download = filename;
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+            };
+            // Persisted images are stored as data URLs — fetch directly, no proxy needed.
+            if (src.startsWith('data:')) {
+              fetch(src)
+                .then(r => r.blob())
+                .then(triggerDownload)
+                .catch(() => {
+                  const a = document.createElement('a');
+                  a.href = src;
+                  a.download = filename;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                });
+              return;
+            }
+            // HTTP URLs: in dev use the Vite proxy to bypass CORS; in prod try direct cors fetch.
             let fetchPromise;
             try {
               const parsed = new URL(src);
@@ -255,16 +281,7 @@ export class Chat {
             }
             fetchPromise
               .then(r => { if (!r.ok) throw new Error('fetch failed'); return r.blob(); })
-              .then(blob => {
-                const objectUrl = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = objectUrl;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-              })
+              .then(triggerDownload)
               .catch(() => window.open(src, '_blank'));
           });
 
