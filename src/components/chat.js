@@ -1,4 +1,5 @@
 import { renderMarkdown, attachCopyButtons, parseThinkStream } from '../markdown.js';
+import { formatTtft, formatDecodeTps } from '../api.js';
 import { icon } from '../icons.js';
 
 const MAX_VISIBLE = 50;
@@ -318,6 +319,9 @@ export class Chat {
         msgDiv.appendChild(timeEl);
       }
 
+      const metricsRow = this._buildMetricsRow(msg.metrics);
+      if (metricsRow) msgDiv.appendChild(metricsRow);
+
       wrapper.appendChild(msgDiv);
     }
 
@@ -346,6 +350,46 @@ export class Chat {
     bubble.innerHTML = renderMarkdown(thinkText ? mainText : text);
     attachCopyButtons(bubble);
     container.appendChild(bubble);
+  }
+
+  // Builds the performance-metrics pill row (TTFT / decode speed / output tokens)
+  // shown under an assistant message. Values come only from the backend's usage
+  // object — the UI never estimates them. Returns null when there is nothing to show.
+  _buildMetricsRow(metrics) {
+    if (!metrics) return null;
+
+    const pills = [];
+    if (metrics.ttftMs != null) {
+      pills.push({
+        svg: icon('zap'),
+        text: `TTFT ${formatTtft(metrics.ttftMs)}`,
+        title: 'Time to first token — reported by backend',
+      });
+    }
+    if (metrics.decodeTps != null) {
+      pills.push({
+        svg: icon('gauge'),
+        text: formatDecodeTps(metrics.decodeTps),
+        title: 'Decode speed — reported by backend',
+      });
+    }
+    if (metrics.completionTokens != null) {
+      pills.push({
+        svg: '',
+        text: `${metrics.completionTokens} tok`,
+        title: 'Output tokens — reported by backend',
+      });
+    }
+    if (!pills.length) return null;
+
+    const row = document.createElement('div');
+    row.className = 'mt-1.5 flex items-center gap-2 flex-wrap';
+    row.innerHTML = pills.map(p => `
+      <span class="inline-flex items-center gap-1.5 text-[11px] font-mono tabular-nums text-[var(--c-tx3)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1" title="${escapeHtml(p.title)}">
+        ${p.svg}<span>${escapeHtml(p.text)}</span>
+      </span>
+    `).join('');
+    return row;
   }
 
   appendUserMessage(message) {
@@ -458,7 +502,7 @@ export class Chat {
     this._scrollToBottom();
   }
 
-  finalizeAssistantMessage(fullText, model = '') {
+  finalizeAssistantMessage(fullText, model = '', metrics = null) {
     if (!this._streamingEl) return;
 
     const msgDiv = this._streamingEl.parentNode;
@@ -498,6 +542,7 @@ export class Chat {
       content: fullText,
       timestamp: ts,
       ...(model ? { model } : {}),
+      ...(metrics ? { metrics } : {}),
     });
 
     // Append model meta row to the live message wrapper
@@ -512,6 +557,9 @@ export class Chat {
       metaEl.textContent = formatTime(ts);
       msgDiv.appendChild(metaEl);
     }
+
+    const metricsRow = this._buildMetricsRow(metrics);
+    if (metricsRow) msgDiv.appendChild(metricsRow);
 
     this._scrollToBottom();
   }

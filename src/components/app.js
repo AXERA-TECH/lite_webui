@@ -364,8 +364,12 @@ export class App {
 
     let started = false;
     let fullText = '';
+    let metrics = null;
     try {
-      for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, { signal })) {
+      for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, {
+        signal,
+        onMetrics: (m) => { metrics = m; },
+      })) {
         if (!started) {
           this.chat.startAssistantMessage();
           started = true;
@@ -377,12 +381,13 @@ export class App {
       if (!started) this.chat.startAssistantMessage();
 
       // Finalize
-      this.chat.finalizeAssistantMessage(fullText, model);
+      this.chat.finalizeAssistantMessage(fullText, model, metrics);
       const assistantMsg = {
         role: 'assistant',
         content: fullText,
         model,
         timestamp: new Date().toISOString(),
+        ...(metrics ? { metrics } : {}),
       };
       store.addMessage(convId, assistantMsg);
       this._pushSessionMsg(convId, assistantMsg);
@@ -392,13 +397,14 @@ export class App {
       if (err.name === 'AbortError') {
         // User stopped — finalize whatever was received so far.
         if (!started) this.chat.startAssistantMessage();
-        this.chat.finalizeAssistantMessage(fullText, model);
+        this.chat.finalizeAssistantMessage(fullText, model, metrics);
         if (fullText) {
           const assistantMsg = {
             role: 'assistant',
             content: fullText,
             model,
             timestamp: new Date().toISOString(),
+            ...(metrics ? { metrics } : {}),
           };
           store.addMessage(convId, assistantMsg);
           this._pushSessionMsg(convId, assistantMsg);
@@ -598,6 +604,7 @@ export class App {
     const cfg = this._getApiConfig();
 
     let fullText = '';
+    let metrics = null;
     try {
       const transcript = await transcribeAudio(cfg.baseUrl, cfg.apiKey, model, audio.file, { signal });
 
@@ -639,17 +646,21 @@ export class App {
       this.chat.showSystemMessage('Audio transcribed — applying instruction');
       this.chat.startAssistantMessage();
 
-      for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, { signal })) {
+      for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, {
+        signal,
+        onMetrics: (m) => { metrics = m; },
+      })) {
         fullText += chunk;
         this.chat.appendToAssistantMessage(chunk);
       }
 
-      this.chat.finalizeAssistantMessage(fullText, model);
+      this.chat.finalizeAssistantMessage(fullText, model, metrics);
       const assistantMsg = {
         role: 'assistant',
         content: fullText,
         model,
         timestamp: new Date().toISOString(),
+        ...(metrics ? { metrics } : {}),
       };
       store.addMessage(convId, assistantMsg);
       this._pushSessionMsg(convId, assistantMsg);
@@ -658,13 +669,14 @@ export class App {
     } catch (err) {
       if (err.name === 'AbortError') {
         // Finalize partial text if any was received
-        this.chat.finalizeAssistantMessage(fullText, model);
+        this.chat.finalizeAssistantMessage(fullText, model, metrics);
         if (fullText) {
           const assistantMsg = {
             role: 'assistant',
             content: fullText,
             model,
             timestamp: new Date().toISOString(),
+            ...(metrics ? { metrics } : {}),
           };
           store.addMessage(convId, assistantMsg);
           this._pushSessionMsg(convId, assistantMsg);

@@ -142,14 +142,71 @@ export function formatCompactTokenCount(tokens) {
   return `${Math.round(safe / 1000)}k`;
 }
 
+function pickFiniteNumber(...values) {
+  for (const value of values) {
+    const num = Number(value);
+    if (Number.isFinite(num)) return num;
+  }
+  return null;
+}
+
+/**
+ * Extracts server-reported performance metrics from a streaming `usage` object.
+ *
+ * This is a display UI: the frontend never estimates these numbers itself. It
+ * shows only what the backend reports (see README → Performance Metrics), so the
+ * values reflect real server-side inference rather than browser/network timing.
+ * Returns null when the backend provided none of the recognised fields.
+ *
+ * @param {object?} usage  Final `usage` object from the stream, if any.
+ */
+export function extractServerMetrics(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+
+  const ttftRaw = pickFiniteNumber(usage.ttft_ms, usage.time_to_first_token_ms);
+  const tpsRaw = pickFiniteNumber(usage.decode_tps, usage.tokens_per_second);
+  const tokensRaw = pickFiniteNumber(usage.completion_tokens, usage.output_tokens);
+
+  const ttftMs = ttftRaw != null && ttftRaw >= 0 ? ttftRaw : null;
+  const decodeTps = tpsRaw != null && tpsRaw > 0 ? tpsRaw : null;
+  // A response that produced text cannot truly have 0 output tokens, so treat a
+  // non-positive count as "not reported" rather than rendering a bogus "0 tok".
+  const completionTokens = tokensRaw != null && tokensRaw > 0 ? tokensRaw : null;
+
+  if (ttftMs == null && decodeTps == null && completionTokens == null) return null;
+  return { ttftMs, decodeTps, completionTokens };
+}
+
+/** Formats a time-to-first-token value (ms) for display, e.g. "82 ms" / "1.24 s". */
+export function formatTtft(ms) {
+  if (ms == null) return '';
+  const value = Number(ms);
+  if (!Number.isFinite(value) || value < 0) return '';
+  if (value < 1000) return `${Math.round(value)} ms`;
+  return `${(value / 1000).toFixed(2)} s`;
+}
+
+/** Formats a decode throughput value (tokens/sec) for display, e.g. "45.6 tok/s". */
+export function formatDecodeTps(tps) {
+  const value = Number(tps);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const num = value >= 100 ? String(Math.round(value)) : value.toFixed(1);
+  return `${num} tok/s`;
+}
+
 export async function* streamCompletion(baseUrl, apiKey, model, messages, options = {}) {
-  const { onUsage, signal } = options;
+  const { onUsage, onMetrics, signal } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
   const url = `${urlBase}/v1/chat/completions`;
+
+  let serverUsage = null;
+
   const res = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model, messages, stream: true }),
+    // stream_options.include_usage asks OpenAI-compatible backends to emit a
+    // final usage chunk; our TTFT / decode-speed fields ride along inside it.
+    body: JSON.stringify({ model, messages, stream: true, stream_options: { include_usage: true } }),
     signal,
   });
 
@@ -169,43 +226,60 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  const captureUsage = (json) => {
+    if (json.usage && typeof json.usage === 'object') {
+      serverUsage = json.usage;
+      if (json.usage.total_tokens != null) onUsage?.(json.usage);
+    }
+  };
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop(); // keep incomplete line
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (!trimmed.startsWith('data: ')) continue;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete line
 
-      const data = trimmed.slice(6);
-      if (data === '[DONE]') return;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (!trimmed.startsWith('data: ')) continue;
 
-      try {
-        const json = JSON.parse(data);
-        if (json.usage?.total_tokens != null) onUsage?.(json.usage);
-        const delta = json.choices?.[0]?.delta;
-        if (delta?.content) yield delta.content;
-      } catch {
-        // ignore malformed SSE lines
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') return;
+
+        try {
+          const json = JSON.parse(data);
+          captureUsage(json);
+          const delta = json.choices?.[0]?.delta;
+          if (delta?.content) yield delta.content;
+        } catch {
+          // ignore malformed SSE lines
+        }
       }
     }
-  }
 
-  // flush any remaining buffer
-  if (buffer.trim().startsWith('data: ')) {
-    const data = buffer.trim().slice(6);
-    if (data && data !== '[DONE]') {
-      try {
-        const json = JSON.parse(data);
-        if (json.usage?.total_tokens != null) onUsage?.(json.usage);
-        const delta = json.choices?.[0]?.delta;
-        if (delta?.content) yield delta.content;
-      } catch { /* ignore */ }
+    // flush any remaining buffer
+    if (buffer.trim().startsWith('data: ')) {
+      const data = buffer.trim().slice(6);
+      if (data && data !== '[DONE]') {
+        try {
+          const json = JSON.parse(data);
+          captureUsage(json);
+          const delta = json.choices?.[0]?.delta;
+          if (delta?.content) yield delta.content;
+        } catch { /* ignore */ }
+      }
+    }
+  } finally {
+    // Emit whatever performance metrics the backend reported (normal end, early
+    // stop, or abort). The frontend never fabricates these — no server data,
+    // no metrics shown.
+    if (onMetrics) {
+      const metrics = extractServerMetrics(serverUsage);
+      if (metrics) onMetrics(metrics);
     }
   }
 }

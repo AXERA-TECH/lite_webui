@@ -185,6 +185,57 @@ describe('App model metadata in messages', () => {
   });
 });
 
+describe('App performance metrics', () => {
+  function makeMetricStreamFetch() {
+    const sseChunks = [
+      'data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n',
+      'data: {"choices":[],"usage":{"completion_tokens":512,"total_tokens":600,"ttft_ms":82,"decode_tps":45.6}}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    let idx = 0;
+    const reader = {
+      read: vi.fn(async () =>
+        idx >= sseChunks.length
+          ? { done: true }
+          : { done: false, value: new TextEncoder().encode(sseChunks[idx++]) }
+      ),
+    };
+    return vi.fn(async () => ({ ok: true, body: { getReader: () => reader } }));
+  }
+
+  it('renders server-reported TTFT and decode speed under the assistant message', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['gpt-test']);
+    store.setCurrentModel('http://a.local', 'gpt-test');
+    globalThis.fetch = makeMetricStreamFetch();
+
+    const { app, root } = mountApp();
+    await app._handleSend('Hi', null, null, null);
+
+    const chatEl = root.querySelector('#chat-messages');
+    expect(chatEl?.textContent).toContain('TTFT 82 ms');
+    expect(chatEl?.textContent).toContain('45.6 tok/s');
+    expect(chatEl?.textContent).toContain('512 tok');
+  });
+
+  it('persists metrics on the stored assistant message', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['gpt-test']);
+    store.setCurrentModel('http://a.local', 'gpt-test');
+    globalThis.fetch = makeMetricStreamFetch();
+
+    const { app } = mountApp();
+    await app._handleSend('Hi', null, null, null);
+
+    const last = store.getCurrentConversation().messages.at(-1);
+    expect(last.metrics.ttftMs).toBe(82);
+    expect(last.metrics.decodeTps).toBe(45.6);
+    expect(last.metrics.completionTokens).toBe(512);
+  });
+});
+
 describe('App audio workflows', () => {
   it('uploads audio and returns transcription text', async () => {
     setViewport(1280);
