@@ -1,5 +1,5 @@
 import { renderMarkdown, attachCopyButtons, parseThinkStream } from '../markdown.js';
-import { formatTtft, formatDecodeTps } from '../api.js';
+import { formatTtft, formatTps } from '../api.js';
 import { icon } from '../icons.js';
 
 const MAX_VISIBLE = 50;
@@ -352,32 +352,31 @@ export class Chat {
     container.appendChild(bubble);
   }
 
-  // Builds the performance-metrics pill row (TTFT / decode speed / output tokens)
-  // shown under an assistant message. Values come only from the backend's usage
-  // object — the UI never estimates them. Returns null when there is nothing to show.
+  // Builds the performance-metrics pill row shown under an assistant message.
+  // Fully data-driven: one pill per recognized metric the backend reported, in
+  // the fixed order below; nothing renders when none are present. The UI never
+  // computes any value — see extractServerMetrics().
   _buildMetricsRow(metrics) {
     if (!metrics) return null;
 
+    const specs = [
+      { field: 'ttftMs',          icon: 'zap',        label: 'TTFT',    format: formatTtft, title: 'Time to first token — reported by backend' },
+      { field: 'prefillTps',      icon: 'trendingUp', label: 'prefill', format: formatTps,  title: 'Prefill speed — reported by backend' },
+      { field: 'decodeTps',       icon: 'gauge',      label: 'decode',  format: formatTps,  title: 'Decode speed — reported by backend' },
+      { field: 'inputTokens',     icon: '',           label: 'in',      format: String,     title: 'Input tokens — reported by backend' },
+      { field: 'completionTokens', icon: '',          label: 'out',     format: String,     title: 'Output tokens — reported by backend' },
+    ];
+
     const pills = [];
-    if (metrics.ttftMs != null) {
+    for (const spec of specs) {
+      const value = metrics[spec.field];
+      if (value == null) continue;
+      const valueStr = spec.format(value);
+      if (!valueStr) continue;
       pills.push({
-        svg: icon('zap'),
-        text: `TTFT ${formatTtft(metrics.ttftMs)}`,
-        title: 'Time to first token — reported by backend',
-      });
-    }
-    if (metrics.decodeTps != null) {
-      pills.push({
-        svg: icon('gauge'),
-        text: formatDecodeTps(metrics.decodeTps),
-        title: 'Decode speed — reported by backend',
-      });
-    }
-    if (metrics.completionTokens != null) {
-      pills.push({
-        svg: '',
-        text: `${metrics.completionTokens} tok`,
-        title: 'Output tokens — reported by backend',
+        svg: spec.icon ? icon(spec.icon) : '',
+        text: `${spec.label} ${valueStr}`,
+        title: spec.title,
       });
     }
     if (!pills.length) return null;

@@ -6,7 +6,7 @@ import {
   transcribeAudio,
   extractServerMetrics,
   formatTtft,
-  formatDecodeTps,
+  formatTps,
 } from '../src/api.js';
 
 // ─── buildRequestConfig ──────────────────────────────────────────────────────
@@ -204,40 +204,51 @@ describe('extractServerMetrics', () => {
   });
 
   it('returns null when usage has no recognised metric fields', () => {
-    // Standard token counts alone are not performance metrics.
-    expect(extractServerMetrics({ prompt_tokens: 10, total_tokens: 20 })).toBeNull();
+    // total_tokens alone is not a displayed metric (redundant with in/out).
+    expect(extractServerMetrics({ total_tokens: 20 })).toBeNull();
   });
 
-  it('reads server-reported ttft_ms and decode_tps verbatim', () => {
-    const m = extractServerMetrics({ completion_tokens: 512, ttft_ms: 39.96, decode_tps: 36.13 });
+  it('reads server-reported metrics verbatim', () => {
+    const m = extractServerMetrics({
+      prompt_tokens: 10, completion_tokens: 512,
+      ttft_ms: 39.96, prefill_tps: 220.5, decode_tps: 36.13,
+    });
     expect(m.ttftMs).toBe(39.96);
+    expect(m.prefillTps).toBe(220.5);
     expect(m.decodeTps).toBe(36.13);
+    expect(m.inputTokens).toBe(10);
     expect(m.completionTokens).toBe(512);
   });
 
   it('accepts documented field aliases', () => {
-    const m = extractServerMetrics({ time_to_first_token_ms: 40, tokens_per_second: 30, output_tokens: 100 });
+    const m = extractServerMetrics({
+      time_to_first_token_ms: 40, prefill_tokens_per_second: 200,
+      tokens_per_second: 30, input_tokens: 7, output_tokens: 100,
+    });
     expect(m.ttftMs).toBe(40);
+    expect(m.prefillTps).toBe(200);
     expect(m.decodeTps).toBe(30);
+    expect(m.inputTokens).toBe(7);
     expect(m.completionTokens).toBe(100);
   });
 
-  it('treats a zero/negative completion_tokens as unreported (no bogus "0 tok")', () => {
-    expect(extractServerMetrics({ completion_tokens: 0 })).toBeNull();
+  it('omits non-positive speeds/counts (no bogus "0")', () => {
+    expect(extractServerMetrics({ completion_tokens: 0, decode_tps: 0, prompt_tokens: 0 })).toBeNull();
     const m = extractServerMetrics({ completion_tokens: 0, ttft_ms: 40 });
     expect(m.ttftMs).toBe(40);
-    expect(m.completionTokens).toBeNull();
+    expect(m.completionTokens).toBeUndefined();
   });
 
-  it('surfaces partial metrics when only some fields are present', () => {
-    const m = extractServerMetrics({ decode_tps: 36.13 });
-    expect(m.ttftMs).toBeNull();
-    expect(m.decodeTps).toBe(36.13);
-    expect(m.completionTokens).toBeNull();
+  it('includes only the fields the backend reported', () => {
+    expect(extractServerMetrics({ decode_tps: 36.13 })).toEqual({ decodeTps: 36.13 });
   });
 
-  it('never derives metrics from client timing (that argument no longer exists)', () => {
-    // Only the usage object matters — there is no wall-clock fallback anymore.
+  it('surfaces input tokens on their own (standard prompt_tokens)', () => {
+    // A stock OpenAI usage chunk carries prompt_tokens → shows "in N".
+    expect(extractServerMetrics({ prompt_tokens: 10, total_tokens: 10 })).toEqual({ inputTokens: 10 });
+  });
+
+  it('never derives metrics from client timing (usage object is the only source)', () => {
     expect(extractServerMetrics(undefined)).toBeNull();
   });
 });
@@ -255,16 +266,16 @@ describe('formatTtft', () => {
   });
 });
 
-describe('formatDecodeTps', () => {
+describe('formatTps', () => {
   it('shows one decimal below 100', () => {
-    expect(formatDecodeTps(45.62)).toBe('45.6 tok/s');
+    expect(formatTps(45.62)).toBe('45.6 tok/s');
   });
   it('rounds to integer at or above 100', () => {
-    expect(formatDecodeTps(128.7)).toBe('129 tok/s');
+    expect(formatTps(220.7)).toBe('221 tok/s');
   });
   it('returns empty string for invalid input', () => {
-    expect(formatDecodeTps(0)).toBe('');
-    expect(formatDecodeTps(NaN)).toBe('');
+    expect(formatTps(0)).toBe('');
+    expect(formatTps(NaN)).toBe('');
   });
 });
 
@@ -273,7 +284,7 @@ describe('streamCompletion – metrics interface', () => {
     const captured = {};
     const sseChunks = [
       'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n',
-      'data: {"choices":[],"usage":{"completion_tokens":123,"total_tokens":150,"ttft_ms":74,"decode_tps":52.3}}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":123,"total_tokens":132,"ttft_ms":74,"prefill_tps":210,"decode_tps":52.3}}\n\n',
       'data: [DONE]\n\n',
     ];
     let idx = 0;
@@ -301,16 +312,18 @@ describe('streamCompletion – metrics interface', () => {
     expect(chunks).toContain('Hi');
     expect(metrics).not.toBeNull();
     expect(metrics.ttftMs).toBe(74);
+    expect(metrics.prefillTps).toBe(210);
     expect(metrics.decodeTps).toBe(52.3);
+    expect(metrics.inputTokens).toBe(9);
     expect(metrics.completionTokens).toBe(123);
     vi.unstubAllGlobals();
   });
 
-  it('reports no metrics when the backend omits the fields (no client estimate)', async () => {
+  it('emits only the fields the backend provides (no client estimate)', async () => {
     const sseChunks = [
       'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n',
-      // Backend sends a usage chunk but without ttft_ms / decode_tps, and with
-      // completion_tokens=0 — mirrors the current AXERA backend behaviour.
+      // Backend sends usage without ttft/decode/prefill and with completion_tokens=0,
+      // but a real prompt_tokens — only input tokens should surface.
       'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":0,"total_tokens":10}}\n\n',
       'data: [DONE]\n\n',
     ];
@@ -324,19 +337,16 @@ describe('streamCompletion – metrics interface', () => {
     };
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })));
 
-    let metricsCalled = false;
     let metrics = 'sentinel';
     const chunks = [];
     for await (const chunk of streamCompletion('http://a.local', '', 'model', [], {
-      onMetrics: (m) => { metricsCalled = true; metrics = m; },
+      onMetrics: (m) => { metrics = m; },
     })) {
       chunks.push(chunk);
     }
 
     expect(chunks).toContain('你好');
-    // No recognised metric fields → onMetrics is never fired, nothing to show.
-    expect(metricsCalled).toBe(false);
-    expect(metrics).toBe('sentinel');
+    expect(metrics).toEqual({ inputTokens: 10 });
     vi.unstubAllGlobals();
   });
 });

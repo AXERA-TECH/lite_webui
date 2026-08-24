@@ -164,17 +164,23 @@ export function extractServerMetrics(usage) {
   if (!usage || typeof usage !== 'object') return null;
 
   const ttftRaw = pickFiniteNumber(usage.ttft_ms, usage.time_to_first_token_ms);
-  const tpsRaw = pickFiniteNumber(usage.decode_tps, usage.tokens_per_second);
-  const tokensRaw = pickFiniteNumber(usage.completion_tokens, usage.output_tokens);
+  const prefillRaw = pickFiniteNumber(usage.prefill_tps, usage.prefill_tokens_per_second);
+  const decodeRaw = pickFiniteNumber(usage.decode_tps, usage.tokens_per_second);
+  const inputRaw = pickFiniteNumber(usage.prompt_tokens, usage.input_tokens);
+  const outputRaw = pickFiniteNumber(usage.completion_tokens, usage.output_tokens);
 
-  const ttftMs = ttftRaw != null && ttftRaw >= 0 ? ttftRaw : null;
-  const decodeTps = tpsRaw != null && tpsRaw > 0 ? tpsRaw : null;
-  // A response that produced text cannot truly have 0 output tokens, so treat a
-  // non-positive count as "not reported" rather than rendering a bogus "0 tok".
-  const completionTokens = tokensRaw != null && tokensRaw > 0 ? tokensRaw : null;
+  // Include only the metrics the backend actually reported. The UI renders one
+  // pill per present field and nothing when the object is empty — it never
+  // computes or estimates any value itself. A non-positive speed / token count
+  // is treated as "not reported" (avoids showing a bogus "0").
+  const metrics = {};
+  if (ttftRaw != null && ttftRaw >= 0) metrics.ttftMs = ttftRaw;
+  if (prefillRaw != null && prefillRaw > 0) metrics.prefillTps = prefillRaw;
+  if (decodeRaw != null && decodeRaw > 0) metrics.decodeTps = decodeRaw;
+  if (inputRaw != null && inputRaw > 0) metrics.inputTokens = inputRaw;
+  if (outputRaw != null && outputRaw > 0) metrics.completionTokens = outputRaw;
 
-  if (ttftMs == null && decodeTps == null && completionTokens == null) return null;
-  return { ttftMs, decodeTps, completionTokens };
+  return Object.keys(metrics).length ? metrics : null;
 }
 
 /** Formats a time-to-first-token value (ms) for display, e.g. "82 ms" / "1.24 s". */
@@ -186,8 +192,8 @@ export function formatTtft(ms) {
   return `${(value / 1000).toFixed(2)} s`;
 }
 
-/** Formats a decode throughput value (tokens/sec) for display, e.g. "45.6 tok/s". */
-export function formatDecodeTps(tps) {
+/** Formats a throughput value (tokens/sec) for display, e.g. "45.6 tok/s" / "220 tok/s". */
+export function formatTps(tps) {
   const value = Number(tps);
   if (!Number.isFinite(value) || value <= 0) return '';
   const num = value >= 100 ? String(Math.round(value)) : value.toFixed(1);

@@ -189,7 +189,7 @@ describe('App performance metrics', () => {
   function makeMetricStreamFetch() {
     const sseChunks = [
       'data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n',
-      'data: {"choices":[],"usage":{"completion_tokens":512,"total_tokens":600,"ttft_ms":82,"decode_tps":45.6}}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":512,"total_tokens":521,"ttft_ms":82,"prefill_tps":210,"decode_tps":45.6}}\n\n',
       'data: [DONE]\n\n',
     ];
     let idx = 0;
@@ -203,7 +203,7 @@ describe('App performance metrics', () => {
     return vi.fn(async () => ({ ok: true, body: { getReader: () => reader } }));
   }
 
-  it('renders server-reported TTFT and decode speed under the assistant message', async () => {
+  it('renders all server-reported metrics as pills under the assistant message', async () => {
     setViewport(1280);
     store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
     store.saveAvailableModels('http://a.local', ['gpt-test']);
@@ -215,8 +215,10 @@ describe('App performance metrics', () => {
 
     const chatEl = root.querySelector('#chat-messages');
     expect(chatEl?.textContent).toContain('TTFT 82 ms');
-    expect(chatEl?.textContent).toContain('45.6 tok/s');
-    expect(chatEl?.textContent).toContain('512 tok');
+    expect(chatEl?.textContent).toContain('prefill 210 tok/s');
+    expect(chatEl?.textContent).toContain('decode 45.6 tok/s');
+    expect(chatEl?.textContent).toContain('in 9');
+    expect(chatEl?.textContent).toContain('out 512');
   });
 
   it('persists metrics on the stored assistant message', async () => {
@@ -231,7 +233,9 @@ describe('App performance metrics', () => {
 
     const last = store.getCurrentConversation().messages.at(-1);
     expect(last.metrics.ttftMs).toBe(82);
+    expect(last.metrics.prefillTps).toBe(210);
     expect(last.metrics.decodeTps).toBe(45.6);
+    expect(last.metrics.inputTokens).toBe(9);
     expect(last.metrics.completionTokens).toBe(512);
   });
 });

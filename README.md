@@ -124,21 +124,22 @@ The `ctx x/y` badge in the input bar shows:
 
 When usage approaches the configured threshold, the app automatically resets API context before the next send.
 
-## Performance Metrics (TTFT & Decode Speed)
+## Performance Metrics (TTFT, Prefill & Decode Speed)
 
 After each streamed response, a small metrics row appears under the assistant
-message showing **TTFT** (time to first token), **decode speed** (tokens/sec),
-and the **output token count**:
+message. It is **fully data-driven**: the frontend renders one pill per metric
+the backend reported, in a fixed order, and nothing when none are present:
 
 ```text
-⚡ TTFT 40 ms   ·   ⏱ 36.1 tok/s   ·   512 tok
+⚡ TTFT 40 ms   ·   ⤴ prefill 220 tok/s   ·   ⏱ decode 36 tok/s   ·   in 10   ·   out 512
 ```
 
 This is a display UI: **every number comes directly from the backend.** The
-frontend never estimates or derives these values — client-side wall-clock timing
+frontend never estimates or derives any value — client-side wall-clock timing
 includes network / proxy overhead and would misrepresent real inference speed
-(e.g. ~100 ms measured in the browser vs. ~40 ms actual prefill). When the
-backend does not report a field, that pill is simply not shown.
+(e.g. ~100 ms measured in the browser vs. ~40 ms actual prefill), and token
+counts are tokenizer/model-specific, not a character count. Send a field and its
+pill appears; omit it and the pill is not shown.
 
 ### The interface
 
@@ -151,34 +152,39 @@ POST /v1/chat/completions
   "stream_options": { "include_usage": true } }
 ```
 
-**Response (what the backend must provide).** In the final SSE chunk (before
-`[DONE]`), add the fields below to the standard `usage` object. Unknown fields
+**Response (what the backend provides).** In the final SSE chunk (before
+`[DONE]`), put the fields below on the standard `usage` object. Unknown fields
 are ignored by generic OpenAI clients, so this stays fully backward-compatible:
 
 ```jsonc
 data: {"choices":[],"usage":{
-  "prompt_tokens": 10,
-  "completion_tokens": 512,   // real output token count (must be > 0 to be shown)
-  "total_tokens": 522,
-  "ttft_ms": 39.96,           // ★ time to first token, milliseconds (server prefill latency)
-  "decode_tps": 36.13         // ★ decode throughput, tokens per second
+  "prompt_tokens": 10,          // input tokens  → "in 10"   (standard field)
+  "completion_tokens": 512,     // output tokens → "out 512" (standard field)
+  "total_tokens": 522,          // not displayed (redundant with in/out)
+  "ttft_ms": 39.96,             // ★ time to first token, milliseconds (server prefill latency)
+  "prefill_tps": 220.0,         // ★ prefill throughput, tokens per second
+  "decode_tps": 36.13           // ★ decode throughput, tokens per second
 }}
 
 data: [DONE]
 ```
 
-| Field                 | Type   | Meaning                                                        |
-| --------------------- | ------ | -------------------------------------------------------------- |
-| `usage.ttft_ms`       | number | Time to first token in milliseconds (server-side prefill time) |
-| `usage.decode_tps`    | number | Decode/generation throughput in tokens per second              |
-| `usage.completion_tokens` | number | Standard OpenAI field; the output-token badge (shown only when > 0) |
+| Field                 | Shown as | Meaning                                                        |
+| --------------------- | -------- | -------------------------------------------------------------- |
+| `usage.ttft_ms`       | `TTFT`   | Time to first token in milliseconds (server-side prefill latency) |
+| `usage.prefill_tps`   | `prefill`| Prefill (prompt-processing) throughput in tokens per second    |
+| `usage.decode_tps`    | `decode` | Decode/generation throughput in tokens per second              |
+| `usage.prompt_tokens` | `in`     | Input token count (standard OpenAI field; shown when > 0)      |
+| `usage.completion_tokens` | `out` | Output token count (standard OpenAI field; shown when > 0)     |
 
-Field aliases also accepted: `time_to_first_token_ms` for TTFT,
-`tokens_per_second` for decode speed, `output_tokens` for the token count.
+Field aliases also accepted: `time_to_first_token_ms` (TTFT),
+`prefill_tokens_per_second` (prefill), `tokens_per_second` (decode),
+`input_tokens` (in), `output_tokens` (out). `total_tokens` and any other keys
+are ignored.
 
-Each pill renders independently, so partial data is fine — e.g. sending only
-`ttft_ms` shows just the TTFT pill. Emitting none of these fields shows no
-metrics row at all (the current default until the backend adds them).
+Each pill is independent, so partial data is fine — e.g. sending only `ttft_ms`
+shows just the TTFT pill. Emitting none of the recognized fields shows no metrics
+row at all.
 
 ## Development and Deployment
 
