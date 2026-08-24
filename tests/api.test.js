@@ -210,26 +210,33 @@ describe('extractServerMetrics', () => {
 
   it('reads server-reported metrics verbatim', () => {
     const m = extractServerMetrics({
-      prompt_tokens: 10, completion_tokens: 512,
+      prompt_tokens: 10, completion_tokens: 512, prefill_tokens: 6,
       ttft_ms: 39.96, prefill_tps: 220.5, decode_tps: 36.13,
     });
     expect(m.ttftMs).toBe(39.96);
     expect(m.prefillTps).toBe(220.5);
     expect(m.decodeTps).toBe(36.13);
     expect(m.inputTokens).toBe(10);
+    expect(m.prefillTokens).toBe(6);
     expect(m.completionTokens).toBe(512);
   });
 
   it('accepts documented field aliases', () => {
     const m = extractServerMetrics({
       time_to_first_token_ms: 40, prefill_tokens_per_second: 200,
-      tokens_per_second: 30, input_tokens: 7, output_tokens: 100,
+      tokens_per_second: 30, input_tokens: 7, output_tokens: 100, prefilled_tokens: 3,
     });
     expect(m.ttftMs).toBe(40);
     expect(m.prefillTps).toBe(200);
     expect(m.decodeTps).toBe(30);
     expect(m.inputTokens).toBe(7);
+    expect(m.prefillTokens).toBe(3);
     expect(m.completionTokens).toBe(100);
+  });
+
+  it('keeps prefill_tokens=0 (whole prompt served from KV cache)', () => {
+    expect(extractServerMetrics({ prompt_tokens: 20, prefill_tokens: 0 }))
+      .toEqual({ inputTokens: 20, prefillTokens: 0 });
   });
 
   it('omits non-positive speeds/counts (no bogus "0")', () => {

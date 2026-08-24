@@ -168,6 +168,7 @@ export function extractServerMetrics(usage) {
   const decodeRaw = pickFiniteNumber(usage.decode_tps, usage.tokens_per_second);
   const inputRaw = pickFiniteNumber(usage.prompt_tokens, usage.input_tokens);
   const outputRaw = pickFiniteNumber(usage.completion_tokens, usage.output_tokens);
+  const prefillTokRaw = pickFiniteNumber(usage.prefill_tokens, usage.prefilled_tokens);
 
   // Include only the metrics the backend actually reported. The UI renders one
   // pill per present field and nothing when the object is empty — it never
@@ -178,6 +179,9 @@ export function extractServerMetrics(usage) {
   if (prefillRaw != null && prefillRaw > 0) metrics.prefillTps = prefillRaw;
   if (decodeRaw != null && decodeRaw > 0) metrics.decodeTps = decodeRaw;
   if (inputRaw != null && inputRaw > 0) metrics.inputTokens = inputRaw;
+  // Newly-prefilled token count: 0 is valid (whole prompt served from KV cache),
+  // so accept >= 0. The UI shows it only when it is less than the input count.
+  if (prefillTokRaw != null && prefillTokRaw >= 0) metrics.prefillTokens = prefillTokRaw;
   if (outputRaw != null && outputRaw > 0) metrics.completionTokens = outputRaw;
 
   return Object.keys(metrics).length ? metrics : null;

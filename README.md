@@ -131,7 +131,7 @@ message. It is **fully data-driven**: the frontend renders one pill per metric
 the backend reported, in a fixed order, and nothing when none are present:
 
 ```text
-⚡ TTFT 40 ms   ·   ⤴ prefill 220 tok/s   ·   ⏱ decode 36 tok/s   ·   in 10   ·   out 512
+⚡ TTFT 40 ms   ·   ⤴ prefill 220 tok/s   ·   ⏱ decode 36 tok/s   ·   in 43   ·   new 15   ·   out 512
 ```
 
 This is a display UI: **every number comes directly from the backend.** The
@@ -158,12 +158,13 @@ are ignored by generic OpenAI clients, so this stays fully backward-compatible:
 
 ```jsonc
 data: {"choices":[],"usage":{
-  "prompt_tokens": 10,          // input tokens  → "in 10"   (standard field)
+  "prompt_tokens": 43,          // input tokens  → "in 43"   (standard field)
   "completion_tokens": 512,     // output tokens → "out 512" (standard field)
-  "total_tokens": 522,          // not displayed (redundant with in/out)
+  "total_tokens": 555,          // not displayed (redundant with in/out)
   "ttft_ms": 39.96,             // ★ time to first token, milliseconds (server prefill latency)
   "prefill_tps": 220.0,         // ★ prefill throughput, tokens per second
-  "decode_tps": 36.13           // ★ decode throughput, tokens per second
+  "decode_tps": 36.13,          // ★ decode throughput, tokens per second
+  "prefill_tokens": 15          // ★ tokens actually prefilled this turn (rest reused from KV cache)
 }}
 
 data: [DONE]
@@ -175,12 +176,13 @@ data: [DONE]
 | `usage.prefill_tps`   | `prefill`| Prefill (prompt-processing) throughput in tokens per second    |
 | `usage.decode_tps`    | `decode` | Decode/generation throughput in tokens per second              |
 | `usage.prompt_tokens` | `in`     | Input token count (standard OpenAI field; shown when > 0)      |
+| `usage.prefill_tokens` | `new`   | Tokens actually prefilled this turn; **shown only when < `in`** (i.e. KV cache reused a prefix). Lets `prefill_tps × prefill_time` reconcile with what was really computed. |
 | `usage.completion_tokens` | `out` | Output token count (standard OpenAI field; shown when > 0)     |
 
 Field aliases also accepted: `time_to_first_token_ms` (TTFT),
 `prefill_tokens_per_second` (prefill), `tokens_per_second` (decode),
-`input_tokens` (in), `output_tokens` (out). `total_tokens` and any other keys
-are ignored.
+`input_tokens` (in), `prefilled_tokens` (new), `output_tokens` (out).
+`total_tokens` and any other keys are ignored.
 
 Each pill is independent, so partial data is fine — e.g. sending only `ttft_ms`
 shows just the TTFT pill. Emitting none of the recognized fields shows no metrics

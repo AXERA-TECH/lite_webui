@@ -364,6 +364,9 @@ export class Chat {
       { field: 'prefillTps',      icon: 'trendingUp', label: 'prefill', format: formatTps,  title: 'Prefill speed — reported by backend' },
       { field: 'decodeTps',       icon: 'gauge',      label: 'decode',  format: formatTps,  title: 'Decode speed — reported by backend' },
       { field: 'inputTokens',     icon: '',           label: 'in',      format: String,     title: 'Input tokens — reported by backend' },
+      { field: 'prefillTokens',   icon: '',           label: 'new',     format: String,
+        title: 'Tokens newly prefilled this turn (the rest were reused from KV cache)',
+        when: (m) => m.inputTokens != null && m.prefillTokens < m.inputTokens },
       { field: 'completionTokens', icon: '',          label: 'out',     format: String,     title: 'Output tokens — reported by backend' },
     ];
 
@@ -371,6 +374,7 @@ export class Chat {
     for (const spec of specs) {
       const value = metrics[spec.field];
       if (value == null) continue;
+      if (spec.when && !spec.when(metrics)) continue;
       const valueStr = spec.format(value);
       if (!valueStr) continue;
       pills.push({

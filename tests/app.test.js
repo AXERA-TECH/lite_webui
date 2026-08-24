@@ -186,10 +186,10 @@ describe('App model metadata in messages', () => {
 });
 
 describe('App performance metrics', () => {
-  function makeMetricStreamFetch() {
+  function makeMetricStreamFetch(prefillTokens = 5) {
     const sseChunks = [
       'data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n',
-      'data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":512,"total_tokens":521,"ttft_ms":82,"prefill_tps":210,"decode_tps":45.6}}\n\n',
+      `data: {"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":512,"total_tokens":521,"ttft_ms":82,"prefill_tps":210,"decode_tps":45.6,"prefill_tokens":${prefillTokens}}}\n\n`,
       'data: [DONE]\n\n',
     ];
     let idx = 0;
@@ -208,7 +208,7 @@ describe('App performance metrics', () => {
     store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
     store.saveAvailableModels('http://a.local', ['gpt-test']);
     store.setCurrentModel('http://a.local', 'gpt-test');
-    globalThis.fetch = makeMetricStreamFetch();
+    globalThis.fetch = makeMetricStreamFetch(5); // 5 newly prefilled of 9 input → reuse
 
     const { app, root } = mountApp();
     await app._handleSend('Hi', null, null, null);
@@ -218,7 +218,23 @@ describe('App performance metrics', () => {
     expect(chatEl?.textContent).toContain('prefill 210 tok/s');
     expect(chatEl?.textContent).toContain('decode 45.6 tok/s');
     expect(chatEl?.textContent).toContain('in 9');
+    expect(chatEl?.textContent).toContain('new 5');
     expect(chatEl?.textContent).toContain('out 512');
+  });
+
+  it('hides the "new" pill when nothing was reused (prefill_tokens == input)', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['gpt-test']);
+    store.setCurrentModel('http://a.local', 'gpt-test');
+    globalThis.fetch = makeMetricStreamFetch(9); // all 9 freshly prefilled → no reuse
+
+    const { app, root } = mountApp();
+    await app._handleSend('Hi', null, null, null);
+
+    const chatEl = root.querySelector('#chat-messages');
+    expect(chatEl?.textContent).toContain('in 9');
+    expect(chatEl?.textContent).not.toContain('new ');
   });
 
   it('persists metrics on the stored assistant message', async () => {
@@ -226,7 +242,7 @@ describe('App performance metrics', () => {
     store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
     store.saveAvailableModels('http://a.local', ['gpt-test']);
     store.setCurrentModel('http://a.local', 'gpt-test');
-    globalThis.fetch = makeMetricStreamFetch();
+    globalThis.fetch = makeMetricStreamFetch(5);
 
     const { app } = mountApp();
     await app._handleSend('Hi', null, null, null);
@@ -236,6 +252,7 @@ describe('App performance metrics', () => {
     expect(last.metrics.prefillTps).toBe(210);
     expect(last.metrics.decodeTps).toBe(45.6);
     expect(last.metrics.inputTokens).toBe(9);
+    expect(last.metrics.prefillTokens).toBe(5);
     expect(last.metrics.completionTokens).toBe(512);
   });
 });
