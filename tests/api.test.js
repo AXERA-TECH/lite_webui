@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   buildRequestConfig,
+  apiEndpointPath,
+  isDeepSeekEndpoint,
   fetchModels,
   streamCompletion,
   transcribeAudio,
@@ -9,6 +11,20 @@ import {
   formatTtft,
   formatTps,
 } from '../src/api.js';
+
+describe('provider endpoint paths', () => {
+  it('recognises the DeepSeek public API host', () => {
+    expect(isDeepSeekEndpoint('https://api.deepseek.com')).toBe(true);
+    expect(isDeepSeekEndpoint('https://api.deepseek.com/')).toBe(true);
+    expect(isDeepSeekEndpoint('https://example.com')).toBe(false);
+  });
+
+  it('uses DeepSeek paths without /v1 and keeps /v1 for other APIs', () => {
+    expect(apiEndpointPath('https://api.deepseek.com', '/models')).toBe('/models');
+    expect(apiEndpointPath('https://api.deepseek.com', '/chat/completions')).toBe('/chat/completions');
+    expect(apiEndpointPath('http://localhost:8000', '/models')).toBe('/v1/models');
+  });
+});
 
 // ─── buildRequestConfig ──────────────────────────────────────────────────────
 
@@ -75,6 +91,22 @@ describe('fetchModels (dev mode via buildRequestConfig isDev=true default in Vit
     await fetchModels('http://10.168.21.119:8000', '');
     expect(captured.url).toBe('/lw-proxy/v1/models');
     expect(captured.headers['X-LW-Target']).toBe('http://10.168.21.119:8000');
+    vi.unstubAllGlobals();
+  });
+
+  it('calls DeepSeek /models while retaining the proxy target', async () => {
+    const captured = {};
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      captured.url = url;
+      captured.headers = opts?.headers ?? {};
+      return { ok: true, json: async () => ({ data: [{ id: 'deepseek-chat' }] }) };
+    }));
+
+    const models = await fetchModels('https://api.deepseek.com', 'sk-test');
+    expect(captured.url).toBe('/lw-proxy/models');
+    expect(captured.headers['X-LW-Target']).toBe('https://api.deepseek.com');
+    expect(captured.headers.Authorization).toBe('Bearer sk-test');
+    expect(models).toEqual(['deepseek-chat']);
     vi.unstubAllGlobals();
   });
 
@@ -165,6 +197,28 @@ describe('streamCompletion (dev mode)', () => {
     expect(captured.url).toBe('/lw-proxy/v1/chat/completions');
     expect(captured.headers['X-LW-Target']).toBe('http://10.168.21.119:8000');
     expect(chunks).toContain('Hi');
+    vi.unstubAllGlobals();
+  });
+
+  it('calls DeepSeek /chat/completions without /v1', async () => {
+    const captured = {};
+    const reader = {
+      read: vi.fn()
+        .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode('data: [DONE]\n\n') })
+        .mockResolvedValueOnce({ done: true }),
+    };
+
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      captured.url = url;
+      captured.headers = opts?.headers ?? {};
+      return { ok: true, body: { getReader: () => reader } };
+    }));
+
+    for await (const _chunk of streamCompletion('https://api.deepseek.com', 'sk-test', 'deepseek-chat', [])) {
+      // no-op
+    }
+    expect(captured.url).toBe('/lw-proxy/chat/completions');
+    expect(captured.headers.Authorization).toBe('Bearer sk-test');
     vi.unstubAllGlobals();
   });
 });

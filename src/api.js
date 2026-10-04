@@ -4,6 +4,27 @@ const ASCII_CHARS_PER_TOKEN = 4;
 const IMAGE_MESSAGE_TOKEN_ESTIMATE = 256;
 
 /**
+ * DeepSeek's public API uses the OpenAI protocol without the `/v1` path
+ * prefix. Other endpoints supported by Lite WebUI keep the conventional
+ * `/v1/...` paths. Keeping this decision in one place also makes chat and
+ * model discovery use the same provider-specific routing.
+ */
+export function isDeepSeekEndpoint(baseUrl) {
+  try {
+    return new URL(String(baseUrl || '').trim()).hostname.toLowerCase() === 'api.deepseek.com';
+  } catch {
+    return false;
+  }
+}
+
+export function apiEndpointPath(baseUrl, resourcePath) {
+  const resource = String(resourcePath || '').startsWith('/')
+    ? String(resourcePath)
+    : `/${resourcePath}`;
+  return `${isDeepSeekEndpoint(baseUrl) ? '' : '/v1'}${resource}`;
+}
+
+/**
  * Builds the fetch URL and headers for a given API call.
  * In dev mode: routes through the Vite CORS proxy (/lw-proxy) using X-LW-Target.
  * In prod mode: calls the baseUrl directly (server must have CORS configured).
@@ -26,7 +47,7 @@ export function buildRequestConfig(baseUrl, apiKey, isDev = import.meta.env.DEV,
 
 export async function fetchModels(baseUrl, apiKey) {
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
-  const url = `${urlBase}/v1/models`;
+  const url = `${urlBase}${apiEndpointPath(baseUrl, '/models')}`;
   const res = await fetch(url, { headers });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -78,7 +99,7 @@ function extractAudioText(payload) {
 async function submitAudioTextRequest(baseUrl, apiKey, model, file, endpoint, options = {}) {
   const { prompt = '', language = '', signal } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey, import.meta.env.DEV, { contentType: null });
-  const url = `${urlBase}${endpoint}`;
+  const url = `${urlBase}${apiEndpointPath(baseUrl, endpoint)}`;
   const body = new FormData();
 
   body.append('file', file, file?.name || 'audio.wav');
@@ -116,7 +137,7 @@ async function submitAudioTextRequest(baseUrl, apiKey, model, file, endpoint, op
 }
 
 export async function transcribeAudio(baseUrl, apiKey, model, file, options = {}) {
-  return submitAudioTextRequest(baseUrl, apiKey, model, file, '/v1/audio/transcriptions', options);
+  return submitAudioTextRequest(baseUrl, apiKey, model, file, '/audio/transcriptions', options);
 }
 
 export function estimateTextTokens(text) {
@@ -264,7 +285,7 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     idleTimeoutMs = 0, retries = 0,
   } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
-  const url = `${urlBase}/v1/chat/completions`;
+  const url = `${urlBase}${apiEndpointPath(baseUrl, '/chat/completions')}`;
 
   let serverUsage = null;
 
@@ -461,7 +482,7 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
 
   let endpoint, body, headers;
   if (image?.dataUrl) {
-    // img2img: POST /v1/images/edits with multipart FormData
+    // img2img: POST /images/edits (or /v1/images/edits for standard providers)
     const { urlBase, headers: h } = buildRequestConfig(baseUrl, apiKey, undefined, { contentType: null });
     const form = new FormData();
     const blob = await dataUrlToBlob(image.dataUrl);
@@ -471,13 +492,13 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
     form.append('size', size);
     form.append('response_format', responseFormat);
     if (seedInt !== null) form.append('seed', String(seedInt));
-    endpoint = `${urlBase}/v1/images/edits`;
+    endpoint = `${urlBase}${apiEndpointPath(baseUrl, '/images/edits')}`;
     body = form;
     headers = h;
   } else {
-    // txt2img: POST /v1/images/generations with JSON
+    // txt2img: POST /images/generations (or /v1/images/generations)
     const { urlBase, headers: h } = buildRequestConfig(baseUrl, apiKey);
-    endpoint = `${urlBase}/v1/images/generations`;
+    endpoint = `${urlBase}${apiEndpointPath(baseUrl, '/images/generations')}`;
     body = JSON.stringify({
       model, prompt, size, response_format: responseFormat,
       ...(seedInt !== null ? { seed: seedInt } : {}),
@@ -532,7 +553,7 @@ export async function generateSpeech(baseUrl, apiKey, model, input, options = {}
     ? Math.floor(Number(seed)) : null;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
 
-  const res = await fetch(`${urlBase}/v1/audio/speech`, {
+  const res = await fetch(`${urlBase}${apiEndpointPath(baseUrl, '/audio/speech')}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -593,7 +614,7 @@ export async function* streamSpeech(baseUrl, apiKey, model, input, options = {})
   const seedInt = (seed !== null && seed !== '' && Number.isFinite(Number(seed)))
     ? Math.floor(Number(seed)) : null;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
-  const res = await fetch(`${urlBase}/v1/audio/speech`, {
+  const res = await fetch(`${urlBase}${apiEndpointPath(baseUrl, '/audio/speech')}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({

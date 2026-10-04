@@ -83,6 +83,10 @@ http://127.0.0.1:8000
 https://your-api.example.com
 ```
 
+For DeepSeek, use `https://api.deepseek.com` with your API key. Do not append
+`/v1`; model discovery and chat use DeepSeek’s `/models` and
+`/chat/completions` routes.
+
 Do not use:
 
 ```text
