@@ -16,6 +16,14 @@ const VIDEO_SIZE_LIMIT_MB = 50;
 const DEFAULT_VIDEO_FRAME_COUNT = 8;
 const DEFAULT_VIDEO_FRAME_MAX_SIDE = 448;
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export class InputBar {
   constructor() {
     this.el = null;
@@ -26,6 +34,7 @@ export class InputBar {
     this._sending = false;
     this._drawMode = false;
     this._ttsMode = false;
+    this._promptOpen = false;
   }
 
   render() {
@@ -108,6 +117,27 @@ export class InputBar {
             </div>
           </div>
 
+          <div id="prompt-panel" class="${this._promptOpen ? 'flex' : 'hidden'} flex-col gap-2 border-b border-[var(--c-bd)] bg-[var(--c-ho)] px-3 py-3">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-[11px] font-semibold uppercase tracking-wide text-[var(--c-tx3)]">Prompt Library</div>
+              <button id="close-prompt-btn" type="button"
+                class="rounded-md p-1 text-[var(--c-tx3)] transition-colors hover:bg-[var(--c-hi)] hover:text-[var(--c-tx2)]"
+                aria-label="Close Prompt Library">
+                ${icon('x')}
+              </button>
+            </div>
+            <div id="prompt-list" class="max-h-44 space-y-1 overflow-y-auto" role="list" aria-label="Saved prompts"></div>
+            <div class="flex items-center gap-2">
+              <input id="prompt-name-input" type="text"
+                class="min-w-0 flex-1 rounded-lg border border-[var(--c-bd)] bg-[var(--c-card)] px-2.5 py-1.5 text-[12px] text-[var(--c-tx2)] placeholder-[var(--c-txph)] focus:border-[var(--c-bd-hi)] focus:outline-none"
+                placeholder="Save current input as…" aria-label="New prompt name" />
+              <button id="save-prompt-btn" type="button"
+                class="rounded-lg border border-[var(--c-bd)] px-2.5 py-1.5 text-[11px] text-[var(--c-tx2)] transition-colors hover:bg-[var(--c-hi)] hover:text-[var(--c-tx)]">
+                Save
+              </button>
+            </div>
+          </div>
+
           <textarea
             id="message-input"
             class="bg-transparent px-4 pt-3 pb-1 msg-text text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none resize-none w-full"
@@ -147,6 +177,13 @@ export class InputBar {
                 title="${speakTitle}">
                 ${icon('speaker')}
               </button>
+              <button id="prompt-btn" type="button"
+                class="flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]"
+                aria-label="Toggle Prompt Library"
+                aria-expanded="${this._promptOpen}"
+                title="Prompt Library">
+                ${icon('sparkle')}
+              </button>
             </div>
             <div id="seed-wrapper" class="${this._drawMode || this._ttsMode ? 'flex' : 'hidden'} items-center gap-1.5 shrink-0">
               <span class="text-[11px] text-[var(--c-tx3)] select-none">seed</span>
@@ -185,6 +222,7 @@ export class InputBar {
     const audioBtn = this.el.querySelector('#audio-upload-btn');
     const drawBtn = this.el.querySelector('#draw-mode-btn');
     const ttsBtn = this.el.querySelector('#tts-mode-btn');
+    const promptBtn = this.el.querySelector('#prompt-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     const audioInput = this.el.querySelector('#audio-file-input');
     const removeImageBtn = this.el.querySelector('#remove-image-btn');
@@ -216,6 +254,29 @@ export class InputBar {
     ttsBtn?.addEventListener('click', () => {
       if (!ttsBtn.disabled) this._toggleTTSMode();
     });
+
+    promptBtn?.addEventListener('click', () => this._togglePromptPanel());
+    this.el.querySelector('#close-prompt-btn')?.addEventListener('click', () => this._togglePromptPanel(false));
+    this.el.querySelector('#save-prompt-btn')?.addEventListener('click', () => this._saveCurrentPrompt());
+    this.el.querySelector('#prompt-list')?.addEventListener('click', (e) => {
+      const deleteBtn = e.target.closest('.delete-prompt');
+      if (deleteBtn) {
+        e.stopPropagation();
+        store.deletePrompt(deleteBtn.dataset.promptId);
+        this._renderPromptList();
+        return;
+      }
+      const useBtn = e.target.closest('.use-prompt');
+      if (useBtn) this._usePrompt(useBtn.dataset.promptId);
+    });
+    this.el.querySelector('#prompt-name-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this._saveCurrentPrompt();
+      }
+    });
+
+    this._renderPromptList();
 
     // Seed re-roll button
     const seedRerollBtn = this.el.querySelector('#seed-reroll-btn');
@@ -264,6 +325,67 @@ export class InputBar {
     const scrollH = textarea.scrollHeight;
     const maxH = 144; // max-height ~6 rows
     textarea.style.height = Math.min(scrollH, maxH) + 'px';
+  }
+
+  _togglePromptPanel(force = !this._promptOpen) {
+    this._promptOpen = force;
+    const panel = this.el?.querySelector('#prompt-panel');
+    const button = this.el?.querySelector('#prompt-btn');
+    if (!panel) return;
+    panel.classList.toggle('hidden', !this._promptOpen);
+    panel.classList.toggle('flex', this._promptOpen);
+    button?.setAttribute('aria-expanded', String(this._promptOpen));
+    if (this._promptOpen) {
+      this._renderPromptList();
+      this.el.querySelector('#prompt-name-input')?.focus();
+    } else {
+      this.focus();
+    }
+  }
+
+  _renderPromptList() {
+    const list = this.el?.querySelector('#prompt-list');
+    if (!list) return;
+    const prompts = store.getPrompts();
+    list.innerHTML = prompts.map(prompt => `
+      <div class="flex items-start gap-2 rounded-lg border border-transparent px-2 py-1.5 transition-colors hover:border-[var(--c-bd)] hover:bg-[var(--c-card)]" role="listitem">
+        <div class="min-w-0 flex-1">
+          <button type="button" class="use-prompt block w-full truncate text-left text-[12px] text-[var(--c-tx2)]" data-prompt-id="${prompt.id}" title="Use prompt">
+            ${escapeHtml(prompt.name)}
+          </button>
+          <div class="mt-0.5 line-clamp-2 text-[11px] leading-4 text-[var(--c-tx3)]">${escapeHtml(prompt.content.slice(0, 180))}</div>
+        </div>
+        ${prompt.builtin ? '' : `<button type="button" class="delete-prompt rounded-md p-1 text-[var(--c-tx3)] transition-colors hover:bg-[var(--c-hi)] hover:text-red-500" data-prompt-id="${prompt.id}" aria-label="Delete ${escapeHtml(prompt.name)}">${icon('trash')}</button>`}
+      </div>
+    `).join('');
+  }
+
+  _usePrompt(id) {
+    const prompt = store.getPrompts().find(item => item.id === id);
+    if (!prompt) return;
+    const textarea = this.el.querySelector('#message-input');
+    if (!textarea) return;
+    const before = textarea.value.slice(0, textarea.selectionStart ?? textarea.value.length);
+    const after = textarea.value.slice(textarea.selectionEnd ?? textarea.value.length);
+    const glueBefore = before && !before.endsWith('\n') ? '\n\n' : '';
+    textarea.value = `${before}${glueBefore}${prompt.content}${after ? `\n\n${after}` : ''}`;
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = textarea.value.length - (after ? after.length + 2 : 0);
+    this._autoResize(textarea);
+    this._togglePromptPanel(false);
+  }
+
+  _saveCurrentPrompt() {
+    const textarea = this.el.querySelector('#message-input');
+    const nameInput = this.el.querySelector('#prompt-name-input');
+    const content = textarea?.value?.trim() || '';
+    if (!content) return;
+    const name = nameInput?.value?.trim() || content.split('\n')[0].slice(0, 40);
+    const saved = store.savePrompt({ name, content });
+    if (!saved) return;
+    if (nameInput) nameInput.value = '';
+    this._renderPromptList();
+    this._togglePromptPanel(false);
   }
 
   async _handleImageFile(file) {

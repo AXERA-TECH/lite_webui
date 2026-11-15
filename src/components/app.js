@@ -225,6 +225,15 @@ export class App {
     // Regenerate the last text response (remove it and re-run the last prompt)
     document.addEventListener('chat:regenerate-text', () => this._regenerateLastText());
 
+    // Edit a historical user message. The active continuation is saved as a branch.
+    document.addEventListener('chat:edit-user', async (e) => {
+      await this._editUserMessage(e.detail?.msgTimestamp, e.detail?.text);
+    });
+
+    document.addEventListener('chat:restore-branch', (e) => {
+      this._restoreConversationBranch(e.detail?.branchId);
+    });
+
     // Model change
     document.addEventListener('model:changed', (e) => {
       const nextModel = e.detail?.model ?? this.modelPicker.getModel();
@@ -569,6 +578,78 @@ export class App {
     }
   }
 
+  _setSessionMessages(convId, messages) {
+    this._sessionMessages.set(convId, [...messages]);
+  }
+
+  async _editUserMessage(timestamp, text) {
+    const convId = store.getCurrentConversationId();
+    if (!convId || typeof text !== 'string' || !text.trim()) return;
+
+    const conv = this._sessionConvFor(store.getCurrentConversation());
+    const messages = conv?.messages || [];
+    const index = messages.findIndex(message => message.timestamp === timestamp && message.role === 'user');
+    if (index === -1 || typeof messages[index].content !== 'string') return;
+
+    const model = this.modelPicker.getModel();
+    if (!model) {
+      this.chat.showError('Error: no model selected');
+      return;
+    }
+
+    const cfg = this._getApiConfig();
+    const settings = store.getSettings();
+    const oldText = messages[index].content;
+
+    // Preserve the original path before replacing the suffix. This makes prompt
+    // experimentation reversible instead of silently deleting generated work.
+    store.saveConversationBranch(
+      convId,
+      `Original: ${oldText.slice(0, 36) || 'empty prompt'}`,
+      messages,
+    );
+
+    const editedMessage = {
+      ...messages[index],
+      content: text.trim(),
+      editedAt: new Date().toISOString(),
+    };
+    const activeMessages = [...messages.slice(0, index), editedMessage];
+    store.replaceMessages(convId, activeMessages);
+    this._setSessionMessages(convId, activeMessages);
+
+    const restoredConv = store.getCurrentConversation();
+    this.chat.loadConversation(this._sessionConvFor(restoredConv));
+    this._updateContextInfo();
+    this.sidebar.update();
+
+    let apiMessages = formatMessagesForApi(activeMessages);
+    if (settings.systemPrompt && settings.systemPrompt.trim()) {
+      apiMessages = [{ role: 'system', content: settings.systemPrompt.trim() }, ...apiMessages];
+    }
+
+    this.inputBar.setSending(true);
+    this.chat.showTypingIndicator();
+    await this._streamAssistantResponse(convId, model, apiMessages, cfg, settings);
+  }
+
+  _restoreConversationBranch(branchId) {
+    const convId = store.getCurrentConversationId();
+    if (!convId || !branchId) return;
+    const branch = store.restoreConversationBranch(convId, branchId);
+    if (!branch) {
+      this.chat.showError('Error: conversation branch not found');
+      return;
+    }
+
+    this._setSessionMessages(convId, branch.messages || []);
+    const conv = store.getCurrentConversation();
+    this.chat.loadConversation(this._sessionConvFor(conv));
+    this._updateContextInfo();
+    this.sidebar.update();
+    this.chat.showSystemMessage('Restored conversation branch');
+  }
+
   async _regenerateLastText() {
     const convId = store.getCurrentConversationId();
     if (!convId) return;
@@ -587,6 +668,9 @@ export class App {
     if (!model) { this.chat.showError('Error: no model selected'); return; }
     const cfg = this._getApiConfig();
     const settings = store.getSettings();
+
+    // Keep the old response recoverable before dropping it from the active path.
+    store.saveConversationBranch(convId, `Before regenerate: ${messages[messages.length - 1].content.slice(0, 32) || 'response'}`, messages);
 
     // Drop the last assistant message from both the store and the session cache.
     store.removeLastMessage(convId);
@@ -669,6 +753,7 @@ export class App {
           ]
         : prompt,
       timestamp: ts,
+      meta: { type: 'draw' },
     };
 
     this.chat.clearError();
@@ -787,6 +872,7 @@ export class App {
       role: 'user',
       content: text,
       timestamp,
+      meta: { type: 'tts' },
     };
 
     this.chat.clearError();

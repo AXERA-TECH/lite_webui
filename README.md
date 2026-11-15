@@ -30,6 +30,10 @@ The clip below shows SD 1.5 text-to-image and image-to-image generation, then Pa
 - Model capability configuration (Vision, Audio, Draw, Speak) per endpoint
 - Generated images stored as data URLs — persist after backend restart
 - Local conversation history in the browser
+- Conversation search across titles and message contents
+- Prompt Library with built-in prompts and reusable custom prompts
+- Edit a historical text prompt and rerun from that point
+- Reversible conversation branches for edits and regeneration
 - Conversation import and export as JSON
 - Configurable context window and auto-reset threshold
 - Per-response performance metrics — TTFT and decode speed — via an optional backend interface
@@ -178,6 +182,17 @@ in the UI but sends `voxcpm2` to `/v1/audio/speech`.
 
 - `/reset` clears the API context while keeping earlier messages visible in the UI.
 - Switching to a different model or endpoint also starts a fresh API context, so the `ctx` badge returns to `0`.
+
+### Conversation Search, Prompt Library, and Branches
+
+- Use the search box in the sidebar to filter conversations by title, model, or message text.
+- Click the sparkle button in the input bar to open **Prompt Library**:
+  - click a prompt to insert it at the cursor;
+  - enter a name and click **Save** to store the current input as a custom prompt;
+  - custom prompts can be deleted; built-in prompts cannot.
+- Click **Edit & rerun** under a text user message to change that prompt. Messages after it are removed from the active path and the model is called again from the edited prompt.
+- Before an edit or regeneration, Lite WebUI saves the previous path as a branch. Use the **Branch** selector at the top of the conversation to restore it. Restoring also snapshots the current path, so switching is not destructive.
+- Lite WebUI keeps the latest 12 branches per conversation because conversation data is stored locally in the browser.
 
 ### Speech Generation (Speak Mode)
 
@@ -356,7 +371,7 @@ npm test
 
 ## Data Storage
 
-Settings, model capability overrides, theme preference, and conversations are stored in your browser with `localStorage`.
+Settings, prompt library entries, model capability overrides, theme preference, conversations, and their latest branches are stored in your browser with `localStorage`.
 
 Generated images are converted to base64 data URLs on receipt and stored alongside the conversation, so they remain visible even after the backend is restarted or the page is reloaded.
 

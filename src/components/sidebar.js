@@ -12,10 +12,32 @@ function relativeTime(isoString) {
   return new Date(isoString).toLocaleDateString();
 }
 
+function messageText(message) {
+  if (!message) return '';
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content
+      .map(part => part?.type === 'text' ? part.text || '' : '')
+      .join('\n');
+  }
+  return '';
+}
+
+function conversationMatches(conv, query) {
+  if (!query) return true;
+  const haystack = [
+    conv.title || 'New Chat',
+    conv.model || '',
+    ...(conv.messages || []).map(messageText),
+  ].join('\n').toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every(term => haystack.includes(term));
+}
+
 export class Sidebar {
   constructor() {
     this.el = null;
     this._mobileOpen = false;
+    this._searchQuery = '';
   }
 
   render() {
@@ -28,16 +50,21 @@ export class Sidebar {
   }
 
   _template() {
-    const convs = store.getConversations();
+    const allConvs = store.getConversations();
+    const convs = allConvs.filter(conv => conversationMatches(conv, this._searchQuery));
     const currentId = store.getCurrentConversationId();
 
     const items = convs.map(conv => {
       const active = conv.id === currentId;
+      const branchCount = Array.isArray(conv.branches) ? conv.branches.length : 0;
       return `
         <div class="group relative flex items-center gap-2 rounded-xl cursor-pointer border px-3 py-2.5 transition-all ${active ? 'border-[var(--c-side-act-bd)] bg-[var(--c-side-act)]' : 'border-transparent hover:border-[var(--c-side-bd)] hover:bg-[var(--c-side-el)]'}" data-conv-id="${conv.id}" role="option" aria-selected="${active}">
           <div class="flex-1 min-w-0">
             <div class="text-[13px] truncate ${active ? 'font-medium text-[var(--c-side-tx)]' : 'text-[var(--c-side-tx2)]'}">${escapeHtml(conv.title || 'New Chat')}</div>
-            <div class="mt-0.5 truncate text-[11px] text-[var(--c-side-tx3)]">${relativeTime(conv.updatedAt || conv.createdAt)}</div>
+            <div class="mt-0.5 flex items-center gap-1 truncate text-[11px] text-[var(--c-side-tx3)]">
+              <span class="truncate">${relativeTime(conv.updatedAt || conv.createdAt)}</span>
+              ${branchCount ? `<span class="flex-shrink-0 rounded-full bg-[var(--c-hi)] px-1.5">${branchCount}</span>` : ''}
+            </div>
           </div>
           <button class="delete-conv flex-shrink-0 p-1 rounded-md text-[var(--c-side-tx3)] opacity-0 transition-all group-hover:opacity-100 hover:bg-[var(--c-side-el-h)] hover:text-[var(--c-side-tx)]" data-conv-id="${conv.id}" aria-label="Delete conversation">
             ${icon('trash')}
@@ -45,6 +72,9 @@ export class Sidebar {
         </div>
       `;
     }).join('');
+    const listContent = items || (this._searchQuery
+      ? '<div class="px-4 py-8 text-center text-[11px] leading-relaxed text-[var(--c-side-tx3)]">No conversations match “' + escapeHtml(this._searchQuery) + '”.</div>'
+      : '<div class="px-4 py-10 text-center text-[11px] leading-relaxed text-[var(--c-side-tx3)]">No conversations yet.<br>Start a new chat!</div>');
 
     return `
       <aside id="sidebar" class="sidebar-transition flex h-full w-56 flex-col border-r border-[var(--c-side-bd)] bg-[var(--c-side)] flex-shrink-0">
@@ -52,9 +82,12 @@ export class Sidebar {
           <button id="new-chat-btn" class="flex w-full items-center justify-center gap-1.5 rounded-xl border border-[var(--c-side-bd)] bg-[var(--c-side-el)] px-3 py-2.5 text-[12px] text-[var(--c-side-tx2)] transition-all hover:bg-[var(--c-side-el-h)] hover:text-[var(--c-side-tx)] hover:border-[var(--c-side-act-bd)]" aria-label="New chat">
             ${icon('plus')} <span>New Chat</span>
           </button>
+          <input id="conversation-search" type="search" value="${escapeHtml(this._searchQuery)}"
+            class="mt-2 w-full rounded-xl border border-[var(--c-side-bd)] bg-[var(--c-side-el)] px-3 py-2 text-[12px] text-[var(--c-side-tx2)] placeholder-[var(--c-side-tx3)] focus:border-[var(--c-side-act-bd)] focus:outline-none"
+            placeholder="Search conversations" aria-label="Search conversations" autocomplete="off" />
         </div>
         <div id="conv-list" class="flex-1 overflow-y-auto pb-2 px-2 space-y-px" role="listbox" aria-label="Conversations">
-          ${items || '<div class="px-4 py-10 text-center text-[11px] leading-relaxed text-[var(--c-side-tx3)]">No conversations yet.<br>Start a new chat!</div>'}
+          ${listContent}
         </div>
         <div class="border-t border-[var(--c-side-bd)] px-3 py-3">
           <div class="flex items-center gap-1.5 mb-2">
@@ -83,6 +116,21 @@ export class Sidebar {
   _bindEvents() {
     this.el.querySelector('#new-chat-btn').addEventListener('click', () => {
       document.dispatchEvent(new CustomEvent('sidebar:newchat'));
+    });
+
+    this.el.querySelector('#conversation-search').addEventListener('input', (e) => {
+      this._searchQuery = e.target.value;
+      this.update();
+    });
+
+    this.el.querySelector('#conversation-search').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.target.value = '';
+        this._searchQuery = '';
+        this.update();
+        e.target.focus();
+      }
     });
 
     this.el.querySelector('#export-conv-btn').addEventListener('click', () => {
@@ -122,21 +170,27 @@ export class Sidebar {
 
   update() {
     const list = this.el.querySelector('#conv-list');
-    const convs = store.getConversations();
+    const convs = store.getConversations().filter(conv => conversationMatches(conv, this._searchQuery));
     const currentId = store.getCurrentConversationId();
 
     if (convs.length === 0) {
-      list.innerHTML = '<div class="px-4 py-10 text-center text-[11px] leading-relaxed text-[var(--c-side-tx3)]">No conversations yet.<br>Start a new chat!</div>';
+      list.innerHTML = this._searchQuery
+        ? `<div class="px-4 py-8 text-center text-[11px] leading-relaxed text-[var(--c-side-tx3)]">No conversations match “${escapeHtml(this._searchQuery)}”.</div>`
+        : '<div class="px-4 py-10 text-center text-[11px] leading-relaxed text-[var(--c-side-tx3)]">No conversations yet.<br>Start a new chat!</div>';
       return;
     }
 
     const items = convs.map(conv => {
       const active = conv.id === currentId;
+      const branchCount = Array.isArray(conv.branches) ? conv.branches.length : 0;
       return `
         <div class="group relative flex items-center gap-2 rounded-xl cursor-pointer border px-3 py-2.5 transition-all ${active ? 'border-[var(--c-side-act-bd)] bg-[var(--c-side-act)]' : 'border-transparent hover:border-[var(--c-side-bd)] hover:bg-[var(--c-side-el)]'}" data-conv-id="${conv.id}" role="option" aria-selected="${active}">
           <div class="flex-1 min-w-0">
             <div class="text-[13px] truncate ${active ? 'font-medium text-[var(--c-side-tx)]' : 'text-[var(--c-side-tx2)]'}">${escapeHtml(conv.title || 'New Chat')}</div>
-            <div class="mt-0.5 truncate text-[11px] text-[var(--c-side-tx3)]">${relativeTime(conv.updatedAt || conv.createdAt)}</div>
+            <div class="mt-0.5 flex items-center gap-1 truncate text-[11px] text-[var(--c-side-tx3)]">
+              <span class="truncate">${relativeTime(conv.updatedAt || conv.createdAt)}</span>
+              ${branchCount ? `<span class="flex-shrink-0 rounded-full bg-[var(--c-hi)] px-1.5">${branchCount}</span>` : ''}
+            </div>
           </div>
           <button class="delete-conv flex-shrink-0 p-1 rounded-md text-[var(--c-side-tx3)] opacity-0 transition-all group-hover:opacity-100 hover:bg-[var(--c-side-el-h)] hover:text-[var(--c-side-tx)]" data-conv-id="${conv.id}" aria-label="Delete conversation">
             ${icon('trash')}

@@ -39,6 +39,14 @@ function formatTime(iso) {
   }
 }
 
+function formatBranchTime(iso) {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return '';
+  }
+}
+
 export class Chat {
   constructor() {
     this.el = null;
@@ -49,6 +57,7 @@ export class Chat {
     this._errorEl = null;
     this._lightboxKeyHandler = null;
     this._stick = true; // auto-follow the bottom; user can scroll away to pause
+    this._branches = [];
   }
 
   render() {
@@ -85,6 +94,7 @@ export class Chat {
 
   loadConversation(conversation) {
     this._messages = conversation?.messages || [];
+    this._branches = Array.isArray(conversation?.branches) ? conversation.branches : [];
     this._streamingEl = null;
     this._typingEl = null;
     this._rerender();
@@ -99,6 +109,10 @@ export class Chat {
     if (this._messages.length === 0) {
       container.innerHTML = this._welcomeScreen();
       return;
+    }
+
+    if (this._branches.length > 0) {
+      container.appendChild(this._buildBranchSelector());
     }
 
     const msgs = this._messages;
@@ -191,6 +205,19 @@ export class Chat {
       wrapper.querySelectorAll('img[data-lightbox]').forEach(imgEl => {
         imgEl.addEventListener('click', () => this._openLightbox(imgEl.src));
       });
+
+      if (this._canEditUserMessage(msg)) {
+        const actionRow = document.createElement('div');
+        actionRow.className = 'mt-1.5 flex justify-end';
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'rounded-lg border border-transparent px-2 py-1 text-[11px] text-[var(--c-tx3)] transition-colors hover:border-[var(--c-bd)] hover:bg-[var(--c-ho)] hover:text-[var(--c-tx2)]';
+        editBtn.innerHTML = `${icon('wand')} Edit & rerun`;
+        editBtn.title = 'Edit this message and rerun from this point';
+        editBtn.addEventListener('click', () => this._startUserEdit(wrapper, msg));
+        actionRow.appendChild(editBtn);
+        wrapper.querySelector('.flex.justify-end')?.appendChild(actionRow);
+      }
     } else {
       const msgDiv = document.createElement('div');
       msgDiv.className = 'w-full';
@@ -361,6 +388,83 @@ export class Chat {
     return wrapper;
   }
 
+  _buildBranchSelector() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mx-auto w-full max-w-4xl px-6 pt-1 pb-3';
+    wrapper.innerHTML = `
+      <label class="flex items-center gap-2 text-[11px] text-[var(--c-tx3)]">
+        <span class="shrink-0">Branch</span>
+        <select class="min-w-0 flex-1 rounded-lg border border-[var(--c-bd)] bg-[var(--c-card)] px-2 py-1 text-[12px] text-[var(--c-tx2)] focus:border-[var(--c-bd-hi)] focus:outline-none" aria-label="Conversation branch">
+          <option value="">Active path</option>
+          ${this._branches.map(branch => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.label)} · ${formatBranchTime(branch.createdAt)}</option>`).join('')}
+        </select>
+      </label>
+    `;
+    wrapper.querySelector('select').addEventListener('change', (e) => {
+      const branchId = e.target.value;
+      if (!branchId) return;
+      document.dispatchEvent(new CustomEvent('chat:restore-branch', { detail: { branchId } }));
+    });
+    return wrapper;
+  }
+
+  _startUserEdit(wrapper, msg) {
+    const bubble = wrapper.querySelector('.user-bubble');
+    if (!bubble) return;
+    const originalText = typeof msg.content === 'string' ? msg.content : '';
+    const editor = document.createElement('div');
+    editor.className = 'space-y-2';
+    const textarea = document.createElement('textarea');
+    textarea.value = originalText;
+    textarea.rows = Math.min(12, Math.max(3, originalText.split('\n').length + 1));
+    textarea.className = 'w-full rounded-xl border border-[var(--c-bd)] bg-[var(--c-card)] px-3 py-2 text-[14px] leading-6 text-[var(--c-tx)] focus:border-[var(--c-bd-hi)] focus:outline-none';
+    textarea.setAttribute('aria-label', 'Edit user message');
+
+    const buttonRow = document.createElement('div');
+    buttonRow.className = 'flex justify-end gap-2';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'rounded-lg border border-[var(--c-bd)] px-3 py-1 text-[12px] text-[var(--c-tx2)] transition-colors hover:bg-[var(--c-ho)]';
+    cancelButton.textContent = 'Cancel';
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'rounded-lg bg-blue-600 px-3 py-1 text-[12px] text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400';
+    saveButton.textContent = 'Save & rerun';
+
+    const close = () => {
+      editor.replaceWith(bubble);
+    };
+    const save = () => {
+      const nextText = textarea.value.trim();
+      if (!nextText || nextText === originalText) {
+        close();
+        return;
+      }
+      document.dispatchEvent(new CustomEvent('chat:edit-user', {
+        detail: { msgTimestamp: msg.timestamp, text: nextText },
+      }));
+    };
+    cancelButton.addEventListener('click', close);
+    saveButton.addEventListener('click', save);
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        save();
+      }
+    });
+
+    buttonRow.appendChild(cancelButton);
+    buttonRow.appendChild(saveButton);
+    editor.appendChild(textarea);
+    editor.appendChild(buttonRow);
+    bubble.replaceWith(editor);
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+  }
+
   _isLastAssistant(msg) {
     if (!msg || msg.role !== 'assistant') return false;
     for (let i = this._messages.length - 1; i >= 0; i--) {
@@ -369,6 +473,18 @@ export class Chat {
       }
     }
     return false;
+  }
+
+  _canEditUserMessage(msg) {
+    if (!msg || msg.role !== 'user' || typeof msg.content !== 'string') return false;
+    if (msg.meta?.type === 'audio' || msg.meta?.type === 'draw' || msg.meta?.type === 'tts') return false;
+
+    // Older conversations created before message metadata did not mark Draw or
+    // Speak prompts. If their immediate response is generated media, treat them
+    // as specialized tasks and keep the original regenerate workflow.
+    const index = this._messages.findIndex(item => item.timestamp === msg.timestamp);
+    const next = index >= 0 ? this._messages[index + 1] : null;
+    return !(next?.generatedImages?.length || next?.generatedAudio);
   }
 
   // Renders an assistant text message into `container`, handling <think> blocks.
@@ -799,6 +915,7 @@ export class Chat {
   clear() {
     this._closeLightbox();
     this._messages = [];
+    this._branches = [];
     this._streamingEl = null;
     this._streamingText = '';
     this._typingEl = null;
