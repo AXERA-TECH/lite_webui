@@ -24,6 +24,7 @@ const DEFAULT_SETTINGS = {
   // Multimodal video: the browser samples N stills and sends them as images
   videoFrames: 8,
   videoFrameMaxSide: 448,
+  documentMaxChars: 24000,
   // Stop streaming automatically when the model falls into a repetition loop
   autoStopRepetition: true,
 };
@@ -105,6 +106,11 @@ function normalizeSettings(settings = {}) {
   merged.videoFrameMaxSide = Number.isFinite(videoFrameMaxSide) && videoFrameMaxSide >= 64
     ? Math.min(1024, Math.round(videoFrameMaxSide))
     : DEFAULT_SETTINGS.videoFrameMaxSide;
+
+  const documentMaxChars = Number(merged.documentMaxChars);
+  merged.documentMaxChars = Number.isFinite(documentMaxChars) && documentMaxChars >= 1000
+    ? Math.min(200000, Math.round(documentMaxChars))
+    : DEFAULT_SETTINGS.documentMaxChars;
 
   return merged;
 }

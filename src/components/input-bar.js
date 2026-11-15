@@ -1,5 +1,5 @@
 import { store } from '../store.js';
-import { formatCompactTokenCount } from '../api.js';
+import { estimateTextTokens, formatCompactTokenCount } from '../api.js';
 import {
   getCapabilities,
   supportsAudio,
@@ -8,7 +8,14 @@ import {
   supportsTTS,
   supportsVideo,
 } from '../capabilities.js';
+import {
+  DOCUMENT_FILE_SIZE_LIMIT_MB,
+  documentAccept,
+  extractDocumentText,
+  isDocumentFile,
+} from '../documents.js';
 import { icon } from '../icons.js';
+import { resolveContextConfig } from '../context.js';
 
 const VIDEO_SIZE_LIMIT_MB = 50;
 // Video is sent as N still frames (the AX8860 vision backend cannot encode merged video frames).
@@ -30,6 +37,7 @@ export class InputBar {
     this._pendingImage = null; // { dataUrl, file }
     this._pendingVideo = null; // { dataUrl, file }
     this._pendingAudio = null; // { file }
+    this._pendingDocument = null; // { file, status, error, extracted }
     this._currentModel = '';
     this._sending = false;
     this._drawMode = false;
@@ -53,7 +61,7 @@ export class InputBar {
     const imageGenSupported = supportsImageGen(this._currentModel, store.getModelCapabilities());
     const ttsSupported = supportsTTS(this._currentModel, store.getModelCapabilities());
     const mediaSupported = imageSupported || videoSupported;
-    const mediaAccept = [imageSupported && 'image/*', videoSupported && 'video/*'].filter(Boolean).join(',') || 'image/*,video/*';
+        const mediaAccept = [imageSupported && 'image/*', videoSupported && 'video/*'].filter(Boolean).join(',') || 'image/*,video/*';
     const mediaTitle = mediaSupported
       ? `Attach ${[imageSupported && 'image', videoSupported && 'video'].filter(Boolean).join(' / ')} (or paste)`
       : 'Vision not enabled for this model';
@@ -73,6 +81,7 @@ export class InputBar {
       <div class="px-4 pb-4 pt-3 max-w-4xl mx-auto w-full">
         <input id="media-file-input" type="file" accept="${mediaAccept}" class="hidden" aria-label="Attach image or video" />
         <input id="audio-file-input" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" class="hidden" aria-label="Attach audio" />
+        <input id="document-file-input" type="file" accept="${documentAccept()}" class="hidden" aria-label="Attach document" />
         <div id="input-box" class="flex flex-col bg-[var(--c-card)] border ${inputBoxClass} rounded-2xl focus-within:border-[var(--c-bd-hi)] transition-all duration-200 shadow-lg shadow-black/10">
 
           <div id="image-preview-area" class="hidden px-3 pt-3 pb-1">
@@ -113,6 +122,24 @@ export class InputBar {
                 aria-label="Remove audio"
                 type="button">
                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="document-preview-area" class="hidden px-3 pt-3 pb-1">
+            <div class="flex items-center gap-2 rounded-xl border border-[var(--c-bd)] bg-[var(--c-ho)] px-3 py-2">
+              <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--c-hi)] text-[var(--c-tx3)]">
+                ${icon('file')}
+              </div>
+              <div class="min-w-0 flex-1">
+                <div id="document-file-name" class="truncate text-[13px] text-[var(--c-tx2)]"></div>
+                <div id="document-status" class="text-[11px] text-[var(--c-tx3)]">Extracting text…</div>
+              </div>
+              <button id="remove-document-btn"
+                class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-[var(--c-bd)] bg-[var(--c-ho)] text-[var(--c-tx3)] transition-colors hover:text-[var(--c-tx2)]"
+                aria-label="Remove document"
+                type="button">
+                ${icon('x')}
               </button>
             </div>
           </div>
@@ -184,6 +211,12 @@ export class InputBar {
                 title="Prompt Library">
                 ${icon('sparkle')}
               </button>
+              <button id="document-upload-btn" type="button"
+                class="flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]"
+                aria-label="Attach document"
+                title="Attach TXT / Markdown / CSV / JSON / PDF / DOCX / XLSX">
+                ${icon('file')}
+              </button>
             </div>
             <div id="seed-wrapper" class="${this._drawMode || this._ttsMode ? 'flex' : 'hidden'} items-center gap-1.5 shrink-0">
               <span class="text-[11px] text-[var(--c-tx3)] select-none">seed</span>
@@ -223,8 +256,10 @@ export class InputBar {
     const drawBtn = this.el.querySelector('#draw-mode-btn');
     const ttsBtn = this.el.querySelector('#tts-mode-btn');
     const promptBtn = this.el.querySelector('#prompt-btn');
+    const documentBtn = this.el.querySelector('#document-upload-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     const audioInput = this.el.querySelector('#audio-file-input');
+    const documentInput = this.el.querySelector('#document-file-input');
     const removeImageBtn = this.el.querySelector('#remove-image-btn');
     const removeVideoBtn = this.el.querySelector('#remove-video-btn');
     const removeAudioBtn = this.el.querySelector('#remove-audio-btn');
@@ -292,6 +327,9 @@ export class InputBar {
     audioBtn?.addEventListener('click', () => {
       if (!audioBtn.disabled) audioInput.click();
     });
+    documentBtn?.addEventListener('click', () => {
+      if (!documentBtn.disabled) documentInput.click();
+    });
 
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files?.[0];
@@ -303,10 +341,16 @@ export class InputBar {
       if (file) this._handleAudioFile(file);
       audioInput.value = '';
     });
+    documentInput.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) this._handleDocumentFile(file);
+      documentInput.value = '';
+    });
 
     removeImageBtn.addEventListener('click', () => this._clearImage());
     removeVideoBtn?.addEventListener('click', () => this._clearVideo());
     removeAudioBtn?.addEventListener('click', () => this._clearAudio());
+    this.el.querySelector('#remove-document-btn')?.addEventListener('click', () => this._clearDocument());
 
     // Paste media support
     textarea.addEventListener('paste', (e) => this._handlePaste(e));
@@ -392,6 +436,7 @@ export class InputBar {
     if (!file.type.startsWith('image/')) return;
     if (this._pendingAudio) this._clearAudio();
     if (this._pendingVideo) this._clearVideo();
+    if (this._pendingDocument) this._clearDocument();
     const dataUrl = await this._fileToDataUrl(file);
     this._pendingImage = { dataUrl, file };
     this._showImagePreview(dataUrl);
@@ -400,6 +445,85 @@ export class InputBar {
       const textarea = this.el.querySelector('#message-input');
       if (textarea) textarea.placeholder = 'Describe how to modify the image\u2026';
     }
+  }
+
+  async _handleDocumentFile(file) {
+    if (!isDocumentFile(file)) return;
+    if (file.size > DOCUMENT_FILE_SIZE_LIMIT_MB * 1024 * 1024) {
+      this._showDocumentError(file, `Document is larger than ${DOCUMENT_FILE_SIZE_LIMIT_MB} MB`);
+      return;
+    }
+
+    if (this._pendingImage) this._clearImage();
+    if (this._pendingVideo) this._clearVideo();
+    if (this._pendingAudio) this._clearAudio();
+
+    const token = Symbol('document');
+    this._documentToken = token;
+    this._pendingDocument = { file, status: 'extracting', error: '', extracted: null };
+    this._showDocumentStatus('Extracting text…');
+
+    try {
+      const extracted = await extractDocumentText(file, {
+        maxChars: store.getSettings().documentMaxChars,
+      });
+      if (this._documentToken !== token) return;
+      this._pendingDocument = { file, status: 'ready', error: '', extracted };
+      const tokenCount = estimateTextTokens(extracted.text);
+      const tokens = formatCompactTokenCount(tokenCount);
+      const contextConfig = resolveContextConfig(store.getSettings(), this._currentModel);
+      const contextPercent = (tokenCount / contextConfig.maxTokens) * 100;
+      const warningPercent = (contextConfig.warnTokens / contextConfig.maxTokens) * 100;
+      const level = contextPercent > 100
+        ? 'danger'
+        : contextPercent >= warningPercent
+          ? 'warning'
+          : 'success';
+      this._showDocumentStatus(
+        `${extracted.text.toLocaleString()} chars · ≈${tokens} tokens · ${contextPercent.toFixed(0)}% ctx${extracted.truncated ? ' · truncated' : ''}${extracted.pages ? ` · ${extracted.pages} pages` : ''}`,
+        level,
+      );
+    } catch (err) {
+      if (this._documentToken !== token) return;
+      this._showDocumentError(file, err.message);
+    }
+  }
+
+  _showDocumentStatus(status, level = 'muted') {
+    const area = this.el?.querySelector('#document-preview-area');
+    const name = this.el?.querySelector('#document-file-name');
+    const statusEl = this.el?.querySelector('#document-status');
+    area?.classList.remove('hidden');
+    if (name && this._pendingDocument?.file) name.textContent = this._pendingDocument.file.name;
+    if (statusEl) {
+      statusEl.textContent = status;
+      const color = {
+        muted: 'text-[var(--c-tx3)]',
+        success: 'text-emerald-500',
+        warning: 'text-amber-500',
+        danger: 'text-rose-500',
+      }[level] || 'text-[var(--c-tx3)]';
+      statusEl.className = `text-[11px] ${color}`;
+    }
+  }
+
+  _showDocumentError(file, message) {
+    this._pendingDocument = { file, status: 'error', error: message, extracted: null };
+    const area = this.el?.querySelector('#document-preview-area');
+    const name = this.el?.querySelector('#document-file-name');
+    const statusEl = this.el?.querySelector('#document-status');
+    area?.classList.remove('hidden');
+    if (name) name.textContent = file?.name || 'Document';
+    if (statusEl) {
+      statusEl.textContent = `Extraction failed: ${message}`;
+      statusEl.className = 'text-[11px] text-rose-500';
+    }
+  }
+
+  _clearDocument() {
+    this._pendingDocument = null;
+    this._documentToken = null;
+    this.el?.querySelector('#document-preview-area')?.classList.add('hidden');
   }
 
   async _handleVideoFile(file) {
@@ -411,6 +535,7 @@ export class InputBar {
     }
     if (this._pendingAudio) this._clearAudio();
     if (this._pendingImage) this._clearImage();
+    if (this._pendingDocument) this._clearDocument();
     const dataUrl = await this._fileToDataUrl(file);
     const settings = store.getSettings();
     const frameCount = settings.videoFrames || DEFAULT_VIDEO_FRAME_COUNT;
@@ -508,6 +633,7 @@ export class InputBar {
   _handleAudioFile(file) {
     if (!String(file?.type || '').startsWith('audio/') && !/\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(file?.name || '')) return;
     if (this._pendingImage) this._clearImage();
+    if (this._pendingDocument) this._clearDocument();
     this._pendingAudio = { file };
     this._showAudioPreview();
   }
@@ -608,11 +734,23 @@ export class InputBar {
     if (this._sending) return;
     const textarea = this.el.querySelector('#message-input');
     const text = textarea.value.trim();
-    if (!text && !this._pendingImage && !this._pendingVideo && !this._pendingAudio) return;
+    if (!text && !this._pendingImage && !this._pendingVideo && !this._pendingAudio && !this._pendingDocument) return;
+    if (this._pendingDocument && this._pendingDocument.status !== 'ready') {
+      if (this._pendingDocument.status === 'error') {
+        this._showDocumentError(
+          this._pendingDocument.file,
+          `fix or remove before sending: ${this._pendingDocument.error}`,
+        );
+      } else {
+        this._showDocumentStatus('Waiting for document text extraction…', 'muted');
+      }
+      return;
+    }
 
     const image = this._pendingImage;
     const video = this._pendingVideo;
     const audio = this._pendingAudio;
+    const documentAttachment = this._pendingDocument;
     const draw = this._drawMode;
     const tts = this._ttsMode;
     // Capture seed before clearing draw mode (which resets the seed input)
@@ -623,6 +761,7 @@ export class InputBar {
     this._clearImage();
     this._clearVideo();
     this._clearAudio();
+    this._clearDocument();
     // Keep draw mode active on imageGen-capable models so every new generation is just one submit away.
     const caps = getCapabilities(this._currentModel, store.getModelCapabilities());
     if (this._drawMode && !caps.imageGen) this._setDrawMode(false);
@@ -630,7 +769,7 @@ export class InputBar {
     this._autoResize(textarea);
 
     document.dispatchEvent(new CustomEvent('inputbar:send', {
-      detail: { text, image, video, audio, draw, tts, seed },
+      detail: { text, image, video, audio, document: documentAttachment, draw, tts, seed },
     }));
   }
 
@@ -650,6 +789,7 @@ export class InputBar {
       // Keep pending image — it can be used as img2img source.
       if (this._pendingVideo) this._clearVideo();
       if (this._pendingAudio) this._clearAudio();
+      if (this._pendingDocument) this._clearDocument();
     }
 
     this._applyModeStyles({
@@ -671,6 +811,7 @@ export class InputBar {
       if (this._pendingImage) this._clearImage();
       if (this._pendingVideo) this._clearVideo();
       if (this._pendingAudio) this._clearAudio();
+      if (this._pendingDocument) this._clearDocument();
     }
 
     this._applyModeStyles({
@@ -796,6 +937,7 @@ export class InputBar {
     const audioBtn = this.el.querySelector('#audio-upload-btn');
     const drawBtn = this.el.querySelector('#draw-mode-btn');
     const ttsBtn = this.el.querySelector('#tts-mode-btn');
+    const documentBtn = this.el.querySelector('#document-upload-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     if (!mediaBtn || !audioBtn) return;
     const imageSupported = supportsImage(this._currentModel, store.getModelCapabilities());
@@ -866,6 +1008,18 @@ export class InputBar {
         ttsBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
         ttsBtn.title = 'Speech generation not enabled for this model';
         if (this._ttsMode) this._setTTSMode(false);
+      }
+    }
+
+    if (documentBtn) {
+      if (this._drawMode || this._ttsMode) {
+        documentBtn.disabled = true;
+        documentBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
+        documentBtn.title = 'Document input is unavailable in Draw / Speak mode';
+      } else {
+        documentBtn.disabled = false;
+        documentBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
+        documentBtn.title = 'Attach TXT / Markdown / CSV / JSON / PDF / DOCX / XLSX';
       }
     }
   }

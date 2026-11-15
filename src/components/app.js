@@ -8,11 +8,13 @@ import {
   isRepeatingOutput,
 } from '../api.js';
 import { estimateThreadTokens, resolveContextConfig } from '../context.js';
+import { formatDocumentForModel } from '../documents.js';
 import { Sidebar } from './sidebar.js';
 import { Chat } from './chat.js';
 import { InputBar } from './input-bar.js';
 import { ModelPicker } from './model-picker.js';
 import { SettingsModal } from './settings-modal.js';
+import { HealthPanel } from './health-panel.js';
 import { icon } from '../icons.js';
 
 export class App {
@@ -23,6 +25,7 @@ export class App {
     this.inputBar = new InputBar();
     this.modelPicker = new ModelPicker();
     this.settingsModal = new SettingsModal();
+    this.healthPanel = new HealthPanel();
     this._sidebarOpen = false;
     this._abortController = null;
     // The model that owns the API context represented by the ctx badge. Switching
@@ -123,6 +126,7 @@ export class App {
         <div id="model-picker-mount"></div>
       </div>
       <div class="flex items-center gap-2">
+        <div id="health-panel-mount"></div>
         <button id="theme-toggle-btn" class="p-1.5 rounded-lg text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-top-el)] border border-transparent hover:border-[var(--c-top-bd)] transition-all" aria-label="Toggle theme">
           ${icon('sun')}
         </button>
@@ -134,6 +138,7 @@ export class App {
 
     // Mount model picker
     header.querySelector('#model-picker-mount').appendChild(this.modelPicker.render());
+    header.querySelector('#health-panel-mount').appendChild(this.healthPanel.render());
     main.appendChild(header);
 
     // Chat area
@@ -201,6 +206,7 @@ export class App {
         e.detail.draw,
         e.detail.seed ?? null,
         e.detail.tts || false,
+        e.detail.document || null,
       );
     });
 
@@ -342,6 +348,8 @@ export class App {
             content: msg.content,
             model: msg.model,
             timestamp: msg.timestamp || new Date().toISOString(),
+            ...(typeof msg.apiContent === 'string' ? { apiContent: msg.apiContent } : {}),
+            ...(msg.meta ? { meta: msg.meta } : {}),
             ...(msg.generatedImages ? { generatedImages: msg.generatedImages } : {}),
             ...(msg.generatedPrompt ? { generatedPrompt: msg.generatedPrompt } : {}),
             ...(msg.generatedSeed !== undefined ? { generatedSeed: msg.generatedSeed } : {}),
@@ -377,7 +385,7 @@ export class App {
     this._closeMobileSidebar();
   }
 
-  async _handleSend(text, image, video, audio, draw, seed = null, tts = false) {
+  async _handleSend(text, image, video, audio, draw, seed = null, tts = false, documentAttachment = null) {
     const settings = store.getSettings();
     const cfg = this._getApiConfig();
     const trimmedText = text.trim();
@@ -420,6 +428,16 @@ export class App {
         model,
         instruction: trimmedText,
         audio,
+      });
+      return;
+    }
+
+    if (documentAttachment) {
+      await this._handleDocumentTask({
+        convId,
+        model,
+        instruction: trimmedText,
+        document: documentAttachment,
       });
       return;
     }
@@ -725,6 +743,78 @@ export class App {
     // The API receives sampled frames, but the chat must keep echoing the whole video.
     if (video) message.videoUrl = video.dataUrl;
     return message;
+  }
+
+  _buildDocumentUserMessage(instruction, attachment) {
+    const extracted = attachment?.extracted || {};
+    const fileName = extracted.name || attachment.file?.name || 'document';
+    const content = instruction || `Please read ${fileName} and summarize the key points.`;
+    const apiContent = formatDocumentForModel(instruction, extracted);
+
+    return {
+      role: 'user',
+      content,
+      apiContent,
+      timestamp: new Date().toISOString(),
+      meta: {
+        type: 'document',
+        fileName,
+        kind: extracted.kind || '',
+        sizeBytes: extracted.sizeBytes || attachment.file?.size || 0,
+        charCount: extracted.text?.length || 0,
+        truncated: extracted.truncated === true,
+        pages: extracted.pages || null,
+      },
+    };
+  }
+
+  async _handleDocumentTask({ convId, model, instruction, document: attachment }) {
+    if (attachment?.status !== 'ready' || !attachment.extracted?.text) {
+      this.chat.showError('Error: document text is not ready');
+      return;
+    }
+
+    const settings = store.getSettings();
+    const cfg = this._getApiConfig();
+    const contextConfig = resolveContextConfig(settings, model);
+    const userMessage = this._buildDocumentUserMessage(instruction, attachment);
+    const preConv = store.getCurrentConversation();
+    const projectedTokens = estimateThreadTokens(preConv?.messages, userMessage);
+
+    if (preConv?.messages?.length && projectedTokens >= contextConfig.resetTokens) {
+      this._resetConversationContext(
+        convId,
+        `estimated ${projectedTokens.toLocaleString()} tokens reached the ${contextConfig.resetPercent}% auto-reset threshold`,
+      );
+    }
+
+    try {
+      this.chat.clearError();
+      store.addMessage(convId, userMessage);
+      this._pushSessionMsg(convId, userMessage);
+      this.chat.appendUserMessage(userMessage);
+      this._updateContextInfo();
+    } catch (err) {
+      this.chat.showError(`Error: ${err.message}`);
+      this.inputBar.setSending(false);
+      this.inputBar.focus();
+      return;
+    }
+
+    const conv = store.getCurrentConversation();
+    if (conv && conv.messages.length === 1) {
+      store.updateConversationTitle(convId, `Doc: ${userMessage.meta.fileName}`.slice(0, 80));
+      this.sidebar.update();
+    }
+
+    let apiMessages = formatMessagesForApi([...(preConv?.messages || []), userMessage]);
+    if (settings.systemPrompt && settings.systemPrompt.trim()) {
+      apiMessages = [{ role: 'system', content: settings.systemPrompt.trim() }, ...apiMessages];
+    }
+
+    this.inputBar.setSending(true);
+    this.chat.showTypingIndicator();
+    await this._streamAssistantResponse(convId, model, apiMessages, cfg, settings);
   }
 
   _buildAudioUserMessage(audio, instruction = '') {

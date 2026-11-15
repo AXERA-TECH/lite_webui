@@ -47,6 +47,13 @@ function formatBranchTime(iso) {
   }
 }
 
+function formatBytes(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export class Chat {
   constructor() {
     this.el = null;
@@ -180,6 +187,24 @@ export class Chat {
     wrapper.dataset.msgId = msg.timestamp || Math.random();
 
     if (isUser) {
+      const documentMeta = msg.meta?.type === 'document' ? msg.meta : null;
+      const documentHtml = documentMeta ? `
+        <div class="mb-2 flex items-center gap-2 rounded-xl border border-[var(--c-bd)] bg-[var(--c-card)] px-3 py-2 text-left">
+          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--c-hi)] text-[var(--c-tx3)]">${icon('file')}</div>
+          <div class="min-w-0">
+            <div class="truncate text-[12px] text-[var(--c-tx2)]" title="${escapeHtml(documentMeta.fileName || 'Document')}">${escapeHtml(documentMeta.fileName || 'Document')}</div>
+            <div class="text-[11px] text-[var(--c-tx3)]">
+              ${[
+                documentMeta.kind?.toUpperCase(),
+                formatBytes(documentMeta.sizeBytes),
+                documentMeta.charCount ? `${documentMeta.charCount.toLocaleString()} chars` : '',
+                documentMeta.pages ? `${documentMeta.pages} pages` : '',
+                documentMeta.truncated ? 'truncated' : '',
+              ].filter(Boolean).join(' · ')}
+            </div>
+          </div>
+        </div>
+      ` : '';
       const imageHtml = images.map(img => {
         const src = escapeHtml(img.image_url?.url || '');
         return `<img src="${src}" data-lightbox="1" alt="Attached image" class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] object-cover cursor-pointer mb-2 hover:opacity-90 transition-opacity" title="Click to expand" />`;
@@ -193,6 +218,7 @@ export class Chat {
       wrapper.innerHTML = `
         <div class="flex justify-end">
           <div class="max-w-[65%]">
+            ${documentHtml}
             ${imageHtml}
             ${videoHtml}
             ${text ? `<div class="user-bubble px-4 py-3 msg-text text-[var(--c-utx)] whitespace-pre-wrap break-words">${escapeHtml(text)}</div>` : ''}

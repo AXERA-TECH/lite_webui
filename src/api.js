@@ -38,6 +38,28 @@ export async function fetchModels(baseUrl, apiKey) {
   return Array.isArray(list) ? list.map(m => (typeof m === 'string' ? m : m.id)).filter(Boolean).sort() : [];
 }
 
+export async function checkEndpointHealth(baseUrl, apiKey) {
+  const startedAt = performance.now();
+  try {
+    const models = await fetchModels(baseUrl, apiKey);
+    return {
+      ok: true,
+      baseUrl,
+      latencyMs: Math.round(performance.now() - startedAt),
+      models,
+      error: '',
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      baseUrl,
+      latencyMs: Math.round(performance.now() - startedAt),
+      models: [],
+      error: err?.message || String(err),
+    };
+  }
+}
+
 function extractAudioText(payload) {
   if (typeof payload === 'string') return payload.trim();
   if (typeof payload?.text === 'string') return payload.text.trim();
@@ -130,7 +152,11 @@ export function estimateMessageTokens(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return 0;
 
   return messages.reduce((total, message) => {
-    return total + 4 + estimateContentTokens(message.content);
+    return total + 4 + (
+      typeof message.apiContent === 'string'
+        ? estimateTextTokens(message.apiContent)
+        : estimateContentTokens(message.content)
+    );
   }, 2);
 }
 
@@ -580,6 +606,12 @@ export function formatMessagesForApi(messages) {
 
   return messages.map((msg, i) => {
     if (msg.role === 'assistant') return { role: 'assistant', content: msg.content };
+
+    // Document messages expose a friendly title in the UI and their full text
+    // only in apiContent. This keeps the wire format standard text-only.
+    if (typeof msg.apiContent === 'string') {
+      return { role: 'user', content: msg.apiContent };
+    }
 
     // For the most recent user message keep content verbatim (includes any media dataUrl).
     if (i === lastUserIdx || !Array.isArray(msg.content)) {

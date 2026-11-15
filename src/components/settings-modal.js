@@ -83,6 +83,18 @@ export class SettingsModal {
                 <p id="settings-video-token-hint" class="text-xs text-[var(--c-tx3)]">≈1600 tokens total (≈200/frame).</p>
               </div>
             </section>
+            <!-- Document Input -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Document Input</h3>
+              <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-document-max-chars">Maximum extracted characters</label>
+              <input id="settings-document-max-chars" type="number" min="1000" max="200000" step="1000"
+                class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors"
+                placeholder="24000" />
+              <p class="mt-1 text-xs text-[var(--c-tx3)]">
+                TXT / Markdown / CSV / JSON are read directly. PDF, DOCX, and XLSX are parsed in the browser.
+                Larger documents are truncated to protect the model context.
+              </p>
+            </section>
             <!-- Generation Parameters -->
             <section class="border-t border-[var(--c-bd)] pt-6">
               <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Generation Parameters</h3>
@@ -253,6 +265,7 @@ export class SettingsModal {
     this.el.querySelector('#settings-auto-stop').checked = settings.autoStopRepetition !== false;
     this.el.querySelector('#settings-video-frames').value = settings.videoFrames ?? 8;
     this.el.querySelector('#settings-video-frame-side').value = settings.videoFrameMaxSide ?? 448;
+    this.el.querySelector('#settings-document-max-chars').value = settings.documentMaxChars ?? 24000;
     this._updateVideoTokenHint();
 
     this._renderEndpointCards();
@@ -426,6 +439,9 @@ export class SettingsModal {
     const rawFrameSide = Number(this.el.querySelector('#settings-video-frame-side').value);
     const videoFrameMaxSide = Number.isFinite(rawFrameSide) && rawFrameSide >= 64
       ? Math.min(1024, Math.round(rawFrameSide)) : 448;
+    const rawDocumentMaxChars = Number(this.el.querySelector('#settings-document-max-chars').value);
+    const documentMaxChars = Number.isFinite(rawDocumentMaxChars) && rawDocumentMaxChars >= 1000
+      ? Math.min(200000, Math.round(rawDocumentMaxChars)) : 24000;
 
     const endpoints = this._readEndpointCards();
     store.saveEndpoints(endpoints);
@@ -443,6 +459,7 @@ export class SettingsModal {
       systemPrompt,
       videoFrames,
       videoFrameMaxSide,
+      documentMaxChars,
       autoStopRepetition,
     });
 

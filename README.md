@@ -24,9 +24,11 @@ The clip below shows SD 1.5 text-to-image and image-to-image generation, then Pa
 - Speech generation (Speak mode) via compatible `/v1/audio/speech` APIs
 - Image upload and paste for vision-capable models
 - Browser-side video frame sampling for vision backends that accept images but not native video input
+- Browser-side document text extraction for TXT / Markdown / CSV / JSON / PDF / DOCX / XLSX
 - Audio transcription workflow for compatible APIs
 - Automatic audio-input detection for ASR models such as Qwen3-ASR
 - Multiple API endpoints with per-endpoint model management
+- Service health panel with endpoint latency and model availability checks
 - Model capability configuration (Vision, Audio, Draw, Speak) per endpoint
 - Generated images stored as data URLs — persist after backend restart
 - Local conversation history in the browser
@@ -117,6 +119,7 @@ OpenAI product feature. The table below explains exactly what the browser sends.
 | Reasoning | SSE `choices[].delta.reasoning_content` | Common backend extension, not part of the core OpenAI Chat Completions schema. It is rendered as a collapsible `<think>` block. |
 | Vision images | Chat content parts of type `image_url` | Standard OpenAI Vision-compatible format. Images are sent as data URLs. |
 | Video upload | Browser samples frames, then sends multiple `image_url` parts | Deliberate compatibility adaptation; it is **not** a native OpenAI video API. This supports vision backends that accept several images but cannot ingest a merged `video_url`. |
+| Document upload | Browser extracts text, then sends a normal text `user` message through `/v1/chat/completions` | Compatibility adaptation; Lite WebUI does **not** use an OpenAI Files API. PDF / DOCX / XLSX parsing happens locally in the browser. |
 | Image generation | `POST /v1/images/generations` | OpenAI-compatible subset: `model`, `prompt`, `size`, `response_format`, and optional `seed`. `seed` is a backend extension used by several local inference servers. |
 | Image editing | `POST /v1/images/edits` multipart | OpenAI-compatible subset: `image`, `model`, `prompt`, `size`, `response_format`, and optional `seed`. |
 | Audio transcription | `POST /v1/audio/transcriptions` multipart | Standard OpenAI-compatible fields: `file`, `model`, `response_format=json`. The UI also accepts common response fields such as `text`, `transcript`, or `output_text`. |
@@ -169,6 +172,21 @@ in the UI but sends `voxcpm2` to `/v1/audio/speech`.
   - maximum long-side resolution: default `448 px`
 - The original video remains visible in the chat history; only the sampled frames are sent in later API history.
 
+### Documents
+
+- Click the file button in the input bar to attach:
+  - TXT / MD / Markdown / CSV / TSV / JSON / JSONL / LOG / XML / YAML / INI / TOML
+  - PDF with selectable text
+  - DOCX
+  - XLSX
+- Text extraction runs entirely in the browser. The original file is not uploaded to another service.
+- PDF / DOCX / XLSX parser bundles load on demand; they are not included in the initial JavaScript payload.
+- The chat shows a compact file card; the extracted text is included in the Chat Completions prompt, not rendered as a huge message bubble.
+- **Settings → Document Input → Maximum extracted characters** controls the extraction limit. The default is `24,000` characters.
+- Extracted text remains part of the local conversation history so follow-up questions can reference it. Very large documents can still exhaust browser `localStorage`; reduce the extraction limit if that happens.
+- Scanned/image-only PDFs do not contain selectable text. Use an OCR or Vision model for those files.
+- Legacy `.doc`, `.xls`, and `.pptx` files are not converted in this release.
+
 ### Audio
 
 - Attach an audio file from the input bar.
@@ -193,6 +211,18 @@ in the UI but sends `voxcpm2` to `/v1/audio/speech`.
 - Click **Edit & rerun** under a text user message to change that prompt. Messages after it are removed from the active path and the model is called again from the edited prompt.
 - Before an edit or regeneration, Lite WebUI saves the previous path as a branch. Use the **Branch** selector at the top of the conversation to restore it. Restoring also snapshots the current path, so switching is not destructive.
 - Lite WebUI keeps the latest 12 branches per conversation because conversation data is stored locally in the browser.
+
+### Service Health
+
+- Click the activity button in the top bar to open **Service Health**.
+- Lite WebUI checks every configured endpoint with `GET /v1/models`.
+- For each endpoint it reports:
+  - online / offline state
+  - request latency
+  - model count
+  - returned model IDs
+  - the backend / network error on failure
+- **Copy diagnostics** copies a plain-text summary that can be pasted into an issue or sent to a colleague.
 
 ### Speech Generation (Speak Mode)
 
@@ -371,7 +401,7 @@ npm test
 
 ## Data Storage
 
-Settings, prompt library entries, model capability overrides, theme preference, conversations, and their latest branches are stored in your browser with `localStorage`.
+Settings, prompt library entries, model capability overrides, theme preference, conversations, their latest branches, and extracted document text are stored in your browser with `localStorage`.
 
 Generated images are converted to base64 data URLs on receipt and stored alongside the conversation, so they remain visible even after the backend is restarted or the page is reloaded.
 
