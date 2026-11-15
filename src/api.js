@@ -144,6 +144,7 @@ export function formatCompactTokenCount(tokens) {
 
 function pickFiniteNumber(...values) {
   for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
     const num = Number(value);
     if (Number.isFinite(num)) return num;
   }
@@ -163,12 +164,38 @@ function pickFiniteNumber(...values) {
 export function extractServerMetrics(usage) {
   if (!usage || typeof usage !== 'object') return null;
 
-  const ttftRaw = pickFiniteNumber(usage.ttft_ms, usage.time_to_first_token_ms);
-  const prefillRaw = pickFiniteNumber(usage.prefill_tps, usage.prefill_tokens_per_second);
-  const decodeRaw = pickFiniteNumber(usage.decode_tps, usage.tokens_per_second);
+  // llama.cpp reports native timing fields beside `usage` in the final SSE or
+  // completion JSON object. Normalize them onto the same metric interface while
+  // retaining the explicit fields preferred by AXERA backends.
+  const timings = usage.timings && typeof usage.timings === 'object' ? usage.timings : {};
+  const tokenDetails = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
+    ? usage.prompt_tokens_details
+    : {};
+
+  const ttftRaw = pickFiniteNumber(
+    usage.ttft_ms,
+    usage.time_to_first_token_ms,
+    timings.prompt_ms,
+  );
+  const prefillRaw = pickFiniteNumber(
+    usage.prefill_tps,
+    usage.prefill_tokens_per_second,
+    timings.prompt_per_second,
+  );
+  const decodeRaw = pickFiniteNumber(
+    usage.decode_tps,
+    usage.tokens_per_second,
+    timings.predicted_per_second,
+  );
   const inputRaw = pickFiniteNumber(usage.prompt_tokens, usage.input_tokens);
   const outputRaw = pickFiniteNumber(usage.completion_tokens, usage.output_tokens);
-  const prefillTokRaw = pickFiniteNumber(usage.prefill_tokens, usage.prefilled_tokens);
+  const prefillTokRaw = pickFiniteNumber(
+    usage.prefill_tokens,
+    usage.prefilled_tokens,
+    tokenDetails.cached_tokens != null && inputRaw != null
+      ? Math.max(0, inputRaw - tokenDetails.cached_tokens)
+      : null,
+  );
 
   // Include only the metrics the backend actually reported. The UI renders one
   // pill per present field and nothing when the object is empty — it never
@@ -293,7 +320,7 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     if (json) {
       const content = json.choices?.[0]?.message?.content;
       if (content) yield content;
-      serverUsage = json.usage || null;
+      captureFinalMetrics(json);
     }
     if (onMetrics) {
       const metrics = extractServerMetrics(serverUsage);
@@ -307,12 +334,18 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
   let buffer = '';
   let reasoningOpen = false;
 
-  const captureUsage = (json) => {
-    if (json.usage && typeof json.usage === 'object') {
-      serverUsage = json.usage;
-      if (json.usage.total_tokens != null) onUsage?.(json.usage);
-    }
-  };
+  function captureFinalMetrics(json) {
+    const usage = json?.usage && typeof json.usage === 'object' ? json.usage : {};
+    const timings = json?.timings && typeof json.timings === 'object' ? json.timings : null;
+    if (!Object.keys(usage).length && !timings) return;
+
+    // Keep the public `usage` shape, but attach llama.cpp's top-level timings so
+    // extractServerMetrics can normalize both AXERA extensions and native fields.
+    serverUsage = timings
+      ? { ...usage, timings: { ...(usage.timings || {}), ...timings } }
+      : usage;
+    if (usage.total_tokens != null) onUsage?.(usage);
+  }
 
   // Emit reasoning as an inline <think> block so the existing renderer folds it.
   const emitDelta = (delta) => {
@@ -349,7 +382,7 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
 
         try {
           const json = JSON.parse(data);
-          captureUsage(json);
+          captureFinalMetrics(json);
           const delta = json.choices?.[0]?.delta;
           const text = emitDelta(delta);
           if (text) yield text;
@@ -366,7 +399,7 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
       if (data && data !== '[DONE]') {
         try {
           const json = JSON.parse(data);
-          captureUsage(json);
+          captureFinalMetrics(json);
           const delta = json.choices?.[0]?.delta;
           const text = emitDelta(delta);
           if (text) yield text;

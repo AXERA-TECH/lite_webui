@@ -117,7 +117,7 @@ OpenAI product feature. The table below explains exactly what the browser sends.
 | Image editing | `POST /v1/images/edits` multipart | OpenAI-compatible subset: `image`, `model`, `prompt`, `size`, `response_format`, and optional `seed`. |
 | Audio transcription | `POST /v1/audio/transcriptions` multipart | Standard OpenAI-compatible fields: `file`, `model`, `response_format=json`. The UI also accepts common response fields such as `text`, `transcript`, or `output_text`. |
 | Speech generation | `POST /v1/audio/speech` | OpenAI-compatible subset: `model`, `input`, `response_format`, plus optional backend extension `seed`. The UI requests one complete `wav` response and does not currently use streamed PCM. |
-| Performance metrics | Extra fields on the final SSE `usage` object | Backend extension. Generic OpenAI clients normally ignore unknown fields. |
+| Performance metrics | AXERA extension fields on `usage`, or native llama.cpp top-level `timings` | Backend-reported extension. Generic OpenAI clients normally ignore unknown fields. |
 
 ### VoxCPM2 model-name compatibility
 
@@ -260,9 +260,14 @@ POST /v1/chat/completions
   "stream_options": { "include_usage": true } }
 ```
 
-**Response (what the backend provides).** In the final SSE chunk (before
-`[DONE]`), put the fields below on the standard `usage` object. Unknown fields
-are ignored by generic OpenAI clients, so this stays fully backward-compatible:
+**Response (what the backend provides).** Lite WebUI supports two equivalent
+server-reported formats.
+
+#### Format 1: AXERA extension fields on `usage`
+
+In the final SSE chunk (before `[DONE]`), put the fields below on the standard
+`usage` object. Unknown fields are ignored by generic OpenAI clients, so this
+stays fully backward-compatible:
 
 ```jsonc
 data: {"choices":[],"usage":{
@@ -291,6 +296,31 @@ Field aliases also accepted: `time_to_first_token_ms` (TTFT),
 `prefill_tokens_per_second` (prefill), `tokens_per_second` (decode),
 `input_tokens` (in), `prefilled_tokens` (new), `output_tokens` (out).
 `total_tokens` and any other keys are ignored.
+
+#### Format 2: native llama.cpp `timings`
+
+The AX8860 llama.cpp server also reports native timing fields at the top level of
+the final SSE chunk. Lite WebUI normalizes them as follows:
+
+```jsonc
+data: {"choices":[],"usage":{
+  "prompt_tokens": 16,
+  "completion_tokens": 16,
+  "prompt_tokens_details": { "cached_tokens": 10 }
+},"timings":{
+  "prompt_ms": 35.496,             // → TTFT
+  "prompt_per_second": 450.755,    // → prefill
+  "predicted_per_second": 129.022  // → decode
+}}
+```
+
+`new` is derived only from server-reported token counts:
+
+```text
+new = usage.prompt_tokens - usage.prompt_tokens_details.cached_tokens
+```
+
+No client-side timing is used for chat metrics.
 
 Each pill is independent, so partial data is fine — e.g. sending only `ttft_ms`
 shows just the TTFT pill. Emitting none of the recognized fields shows no metrics
