@@ -267,6 +267,26 @@ describe('extractServerMetrics', () => {
     expect(m.completionTokens).toBe(100);
   });
 
+  it('normalizes native llama.cpp timings and cached-token details', () => {
+    const m = extractServerMetrics({
+      prompt_tokens: 16,
+      completion_tokens: 24,
+      prompt_tokens_details: { cached_tokens: 10 },
+      timings: {
+        prompt_ms: 35.496,
+        prompt_per_second: 450.755,
+        predicted_per_second: 129.022,
+      },
+    });
+
+    expect(m.ttftMs).toBe(35.496);
+    expect(m.prefillTps).toBe(450.755);
+    expect(m.decodeTps).toBe(129.022);
+    expect(m.inputTokens).toBe(16);
+    expect(m.prefillTokens).toBe(6);
+    expect(m.completionTokens).toBe(24);
+  });
+
   it('keeps prefill_tokens=0 (whole prompt served from KV cache)', () => {
     expect(extractServerMetrics({ prompt_tokens: 20, prefill_tokens: 0 }))
       .toEqual({ inputTokens: 20, prefillTokens: 0 });
@@ -356,6 +376,42 @@ describe('streamCompletion – metrics interface', () => {
     expect(metrics.decodeTps).toBe(52.3);
     expect(metrics.inputTokens).toBe(9);
     expect(metrics.completionTokens).toBe(123);
+    vi.unstubAllGlobals();
+  });
+
+  it('captures llama.cpp top-level timings from the final SSE chunk', async () => {
+    const sseChunks = [
+      'data: {"choices":[{"delta":{"content":"上海"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":16,"completion_tokens":16,"total_tokens":32,"prompt_tokens_details":{"cached_tokens":0}},"timings":{"prompt_ms":35.496,"prompt_per_second":450.755,"predicted_per_second":129.022}}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    let idx = 0;
+    const reader = {
+      read: vi.fn(async () =>
+        idx >= sseChunks.length
+          ? { done: true }
+          : { done: false, value: new TextEncoder().encode(sseChunks[idx++]) }
+      ),
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })));
+
+    let metrics = null;
+    const chunks = [];
+    for await (const chunk of streamCompletion('http://a.local', '', 'model', [], {
+      onMetrics: (m) => { metrics = m; },
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toContain('上海');
+    expect(metrics).toEqual({
+      ttftMs: 35.496,
+      prefillTps: 450.755,
+      decodeTps: 129.022,
+      inputTokens: 16,
+      prefillTokens: 16,
+      completionTokens: 16,
+    });
     vi.unstubAllGlobals();
   });
 

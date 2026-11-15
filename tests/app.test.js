@@ -283,6 +283,39 @@ describe('App performance metrics', () => {
     expect(chatEl?.textContent).toContain('out 512');
   });
 
+  it('renders metrics from native llama.cpp timing fields', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    store.saveAvailableModels('http://a.local', ['llama-cpp']);
+    store.setCurrentModel('http://a.local', 'llama-cpp');
+
+    const sseChunks = [
+      'data: {"choices":[{"delta":{"content":"上海"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":16,"completion_tokens":16,"prompt_tokens_details":{"cached_tokens":10}},"timings":{"prompt_ms":35.496,"prompt_per_second":450.755,"predicted_per_second":129.022}}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    let idx = 0;
+    const reader = {
+      read: vi.fn(async () =>
+        idx >= sseChunks.length
+          ? { done: true }
+          : { done: false, value: new TextEncoder().encode(sseChunks[idx++]) }
+      ),
+    };
+    globalThis.fetch = vi.fn(async () => ({ ok: true, body: { getReader: () => reader } }));
+
+    const { app, root } = mountApp();
+    await app._handleSend('Hi', null, null, null);
+
+    const chatEl = root.querySelector('#chat-messages');
+    expect(chatEl?.textContent).toContain('TTFT 35 ms');
+    expect(chatEl?.textContent).toContain('prefill 451 tok/s');
+    expect(chatEl?.textContent).toContain('decode 129 tok/s');
+    expect(chatEl?.textContent).toContain('in 16');
+    expect(chatEl?.textContent).toContain('new 6');
+    expect(chatEl?.textContent).toContain('out 16');
+  });
+
   it('hides the "new" pill when nothing was reused (prefill_tokens == input)', async () => {
     setViewport(1280);
     store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
