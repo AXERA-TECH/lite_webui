@@ -16,6 +16,15 @@ const DEFAULT_SETTINGS = {
   theme: 'light',
   contextLimitTokens: 4096,
   contextResetThresholdPercent: 85,
+  temperature: null,
+  maxTokens: null,
+  topP: null,
+  systemPrompt: '',
+  // Multimodal video: the browser samples N stills and sends them as images
+  videoFrames: 8,
+  videoFrameMaxSide: 448,
+  // Stop streaming automatically when the model falls into a repetition loop
+  autoStopRepetition: true,
 };
 
 export function normalizeBaseUrl(baseUrl) {
@@ -26,7 +35,7 @@ export function normalizeBaseUrl(baseUrl) {
 
 function isCapabilityRecord(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return ['text', 'image', 'audio'].some((key) => key in value);
+  return ['text', 'image', 'audio', 'imageGen', 'tts'].some((key) => key in value);
 }
 
 function isLegacyCapabilityMap(value) {
@@ -39,6 +48,12 @@ function normalizeSettings(settings = {}) {
   const merged = { ...DEFAULT_SETTINGS, ...settings };
   const contextLimitTokens = Number(merged.contextLimitTokens);
   const contextResetThresholdPercent = Number(merged.contextResetThresholdPercent);
+  const temperature = merged.temperature === '' || merged.temperature === null || merged.temperature === undefined
+    ? null : Number(merged.temperature);
+  const maxTokens = merged.maxTokens === '' || merged.maxTokens === null || merged.maxTokens === undefined
+    ? null : Number(merged.maxTokens);
+  const topP = merged.topP === '' || merged.topP === null || merged.topP === undefined
+    ? null : Number(merged.topP);
 
   merged.baseUrl = normalizeBaseUrl(merged.baseUrl);
   merged.contextLimitTokens = Number.isFinite(contextLimitTokens) && contextLimitTokens >= 1024
@@ -48,6 +63,26 @@ function normalizeSettings(settings = {}) {
   merged.contextResetThresholdPercent = Number.isFinite(contextResetThresholdPercent)
     ? Math.min(95, Math.max(50, Math.round(contextResetThresholdPercent)))
     : DEFAULT_SETTINGS.contextResetThresholdPercent;
+
+  merged.temperature = Number.isFinite(temperature) && temperature >= 0 && temperature <= 2
+    ? temperature : DEFAULT_SETTINGS.temperature;
+  merged.maxTokens = Number.isFinite(maxTokens) && maxTokens > 0
+    ? Math.round(maxTokens) : DEFAULT_SETTINGS.maxTokens;
+  merged.topP = Number.isFinite(topP) && topP > 0 && topP <= 1
+    ? topP : DEFAULT_SETTINGS.topP;
+  merged.systemPrompt = typeof merged.systemPrompt === 'string' ? merged.systemPrompt : '';
+
+  const videoFrames = Number(merged.videoFrames);
+  merged.videoFrames = Number.isFinite(videoFrames) && videoFrames >= 1
+    ? Math.min(32, Math.round(videoFrames))
+    : DEFAULT_SETTINGS.videoFrames;
+
+  merged.autoStopRepetition = merged.autoStopRepetition !== false;
+
+  const videoFrameMaxSide = Number(merged.videoFrameMaxSide);
+  merged.videoFrameMaxSide = Number.isFinite(videoFrameMaxSide) && videoFrameMaxSide >= 64
+    ? Math.min(1024, Math.round(videoFrameMaxSide))
+    : DEFAULT_SETTINGS.videoFrameMaxSide;
 
   return merged;
 }
@@ -253,6 +288,15 @@ export const store = {
     const idx = convs.findIndex(c => c.id === convId);
     if (idx === -1) return;
     convs[idx].messages = [];
+    convs[idx].updatedAt = new Date().toISOString();
+    this.saveConversations(convs);
+  },
+
+  removeLastMessage(convId) {
+    const convs = this.getConversations();
+    const idx = convs.findIndex(c => c.id === convId);
+    if (idx === -1) return;
+    convs[idx].messages.pop();
     convs[idx].updatedAt = new Date().toISOString();
     this.saveConversations(convs);
   },

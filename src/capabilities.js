@@ -10,11 +10,12 @@ export const DEFAULT_CAPABILITIES = {
   'deepseek-v3':           { text: true,  image: false, audio: false, imageGen: false },
   'deepseek-chat':         { text: true,  image: false, audio: false, imageGen: false },
   'qwen2.5-7b-instruct':   { text: true,  image: false, audio: false, imageGen: false },
+  'voxcpm2':               { text: false, image: false, audio: false, imageGen: false, tts: true },
   'claude-3-5-sonnet':     { text: true,  image: true,  audio: false, imageGen: false },
   'claude-3-opus':         { text: true,  image: true,  audio: false, imageGen: false },
 };
 
-const UNKNOWN_DEFAULT = { text: true, image: false, audio: false, imageGen: false };
+const UNKNOWN_DEFAULT = { text: true, image: false, audio: false, imageGen: false, tts: false };
 
 // Heuristic: detect image-generation models by id pattern when not in DEFAULT_CAPABILITIES.
 function looksLikeImageGenModel(modelId) {
@@ -22,10 +23,22 @@ function looksLikeImageGenModel(modelId) {
   return /dall[- ]?e|flux|stable[- ]?diffusion|stable[- ]?cascade|sdxl|sd[_-]?turbo|dreamshaper|dreamlike|realisticvision|imagen|wanx|cogview|playground|midjourney|ideogram|kolors/.test(id);
 }
 
+function looksLikeSpeechModel(modelId) {
+  const id = String(modelId || '').toLowerCase();
+  return /voxcpm|text[-_]?to[-_]?speech|speech[-_]?synthesis|(^|[-_])tts([-_]|$)/.test(id);
+}
+
+function looksLikeAudioInputModel(modelId) {
+  const id = String(modelId || '').toLowerCase();
+  return /(^|[-_/])asr([-_/]|$)|whisper|speech[-_]?to[-_]?text|transcri/.test(id);
+}
+
 export function getCapabilities(modelId, userOverrides = {}) {
   const base = DEFAULT_CAPABILITIES[modelId] || {
     ...UNKNOWN_DEFAULT,
     imageGen: looksLikeImageGenModel(modelId),
+    tts: looksLikeSpeechModel(modelId),
+    audio: looksLikeAudioInputModel(modelId),
   };
   const override = userOverrides[modelId];
   if (!override) return { ...base };
@@ -47,4 +60,8 @@ export function supportsAudio(modelId, userOverrides = {}) {
 
 export function supportsImageGen(modelId, userOverrides = {}) {
   return getCapabilities(modelId, userOverrides).imageGen;
+}
+
+export function supportsTTS(modelId, userOverrides = {}) {
+  return getCapabilities(modelId, userOverrides).tts;
 }

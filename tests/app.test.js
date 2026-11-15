@@ -95,6 +95,19 @@ describe('App model state', () => {
     expect(app.inputBar._currentModel).toBe('model-a');
   });
 
+  it('activates Speak mode on first load even when no conversation exists', () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local' });
+    store.saveAvailableModels('http://a.local', ['gguf/VoxCPM2-BaseLM-F16.gguf']);
+    store.setCurrentModel('http://a.local', 'gguf/VoxCPM2-BaseLM-F16.gguf');
+
+    const { app } = mountApp();
+
+    expect(app.modelPicker.getModel()).toBe('gguf/VoxCPM2-BaseLM-F16.gguf');
+    expect(app.inputBar._ttsMode).toBe(true);
+    expect(app.inputBar._currentModel).toBe('gguf/VoxCPM2-BaseLM-F16.gguf');
+  });
+
   it('clears the current model after models:changed when current URL no longer provides it', () => {
     setViewport(1280);
     store.saveSettings({ baseUrl: 'http://a.local' });
@@ -107,6 +120,54 @@ describe('App model state', () => {
 
     expect(app.modelPicker.getModel()).toBe('');
     expect(app.inputBar._currentModel).toBe('');
+  });
+});
+
+describe('App context reset accounting', () => {
+  function seedConversation(model = 'model-a') {
+    const conv = store.createConversation(model);
+    store.setCurrentConversationId(conv.id);
+    store.addMessage(conv.id, { role: 'user', content: 'a'.repeat(100), timestamp: 'user-1' });
+    store.addMessage(conv.id, { role: 'assistant', content: 'b'.repeat(100), timestamp: 'assistant-1' });
+    return conv;
+  }
+
+  it('/reset clears persisted API context and resets the ctx badge', async () => {
+    setViewport(1280);
+    seedConversation();
+    store.saveSettings({ baseUrl: 'http://a.local' });
+    store.saveAvailableModels('http://a.local', ['model-a']);
+    store.setCurrentModel('http://a.local', 'model-a');
+
+    const { app } = mountApp();
+    expect(app.inputBar.el.querySelector('#context-info').textContent).not.toBe('ctx 0/4.1k');
+
+    await app._handleSend('/reset', null, null, null);
+
+    expect(store.getCurrentConversation().messages).toHaveLength(0);
+    expect(app.inputBar.el.querySelector('#context-info').textContent).toBe('ctx 0/4.1k');
+  });
+
+  it('switching models resets the API-context counter while preserving visual history', () => {
+    setViewport(1280);
+    const conv = seedConversation();
+    store.saveSettings({ baseUrl: 'http://a.local' });
+    store.saveAvailableModels('http://a.local', ['model-a', 'model-b']);
+    store.setCurrentModel('http://a.local', 'model-a');
+
+    const { app } = mountApp();
+    app._bindEvents();
+    app._pushSessionMsg(conv.id, { role: 'user', content: 'visual user', timestamp: 'visual-user' });
+    app._pushSessionMsg(conv.id, { role: 'assistant', content: 'visual assistant', timestamp: 'visual-assistant' });
+    expect(app.inputBar.el.querySelector('#context-info').textContent).not.toBe('ctx 0/4.1k');
+
+    document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: 'model-b' } }));
+
+    expect(app._activeContextModel).toBe('model-b');
+    expect(store.getCurrentConversation().messages).toHaveLength(0);
+    expect(app._sessionMessages.get(conv.id)).toHaveLength(2);
+    expect(app.inputBar.el.querySelector('#context-info').textContent).toBe('ctx 0/4.1k');
+    expect(app.chat.el.textContent).toContain('Context /reset');
   });
 });
 
@@ -358,6 +419,57 @@ describe('App audio workflows', () => {
     expect(conv.messages.at(-1).content).toBe('待办事项：整理纪要');
     expect(capturedChatBody).toContain('提取会议待办事项');
     expect(capturedChatBody).toContain('原始会议录音文本');
+  });
+});
+
+describe('App speech generation', () => {
+  it('posts to /v1/audio/speech and renders a playable result', async () => {
+    setViewport(1280);
+    store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
+    const advertisedModel = 'gguf/VoxCPM2-BaseLM-F16.gguf';
+    store.saveAvailableModels('http://a.local', [advertisedModel]);
+    store.setCurrentModel('http://a.local', advertisedModel);
+
+    const captured = {};
+    globalThis.fetch = vi.fn(async (url, opts) => {
+      captured.url = url;
+      captured.body = opts?.body;
+      return {
+        ok: true,
+        blob: async () => new Blob(['RIFF-audio'], { type: 'audio/wav' }),
+      };
+    });
+
+    const originalCreateObjectURL = URL.createObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:speech-test');
+    const { app, root } = mountApp();
+
+    try {
+      await app._handleSend('今天天气很好。', null, null, null, false, 42, true);
+    } finally {
+      if (originalCreateObjectURL) URL.createObjectURL = originalCreateObjectURL;
+      else delete URL.createObjectURL;
+    }
+
+    expect(captured.url).toBe('/lw-proxy/v1/audio/speech');
+    expect(JSON.parse(captured.body)).toMatchObject({
+      model: 'voxcpm2',
+      input: '今天天气很好。',
+      response_format: 'wav',
+      seed: 42,
+    });
+
+    const conv = store.getCurrentConversation();
+    const stored = conv.messages.at(-1);
+    expect(stored.content).toBe('语音已生成');
+    expect(stored.generatedAudio.url).toBeUndefined();
+    expect(stored.generatedAudio.contentType).toBe('audio/wav');
+
+    const sessionMessage = app._sessionMessages.get(conv.id).at(-1);
+    expect(sessionMessage.model).toBe(advertisedModel);
+    expect(sessionMessage.generatedAudio.url).toBe('blob:speech-test');
+    expect(root.querySelector('audio[src="blob:speech-test"]')).not.toBeNull();
+    expect(root.textContent).toContain('Download');
   });
 });
 

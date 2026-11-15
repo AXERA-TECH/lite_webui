@@ -205,20 +205,74 @@ export function formatTps(tps) {
 }
 
 export async function* streamCompletion(baseUrl, apiKey, model, messages, options = {}) {
-  const { onUsage, onMetrics, signal } = options;
+  const {
+    onUsage, onMetrics, signal,
+    temperature = null, maxTokens = null, topP = null, seed = null,
+    idleTimeoutMs = 0, retries = 0,
+  } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
   const url = `${urlBase}/v1/chat/completions`;
 
   let serverUsage = null;
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    // stream_options.include_usage asks OpenAI-compatible backends to emit a
-    // final usage chunk; our TTFT / decode-speed fields ride along inside it.
-    body: JSON.stringify({ model, messages, stream: true, stream_options: { include_usage: true } }),
-    signal,
-  });
+  const bodyObj = { model, messages, stream: true, stream_options: { include_usage: true } };
+  if (temperature !== null && temperature !== '' && Number.isFinite(Number(temperature))) {
+    bodyObj.temperature = Number(temperature);
+  }
+  if (maxTokens !== null && maxTokens !== '' && Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) {
+    bodyObj.max_tokens = Math.round(Number(maxTokens));
+  }
+  if (topP !== null && topP !== '' && Number.isFinite(Number(topP))) {
+    bodyObj.top_p = Number(topP);
+  }
+  if (seed !== null && seed !== '' && Number.isFinite(Number(seed))) {
+    bodyObj.seed = Math.floor(Number(seed));
+  }
+
+  // Internal controller: combines the caller's abort signal with an idle timeout.
+  // The idle timer is re-armed on every chunk received, so a long but healthy
+  // stream never trips it — only a truly stalled connection does.
+  const ctl = new AbortController();
+  let idleTimer = null;
+  const armIdle = () => {
+    if (idleTimeoutMs <= 0) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      ctl.abort(new DOMException('Stream idle timeout', 'TimeoutError'));
+    }, idleTimeoutMs);
+  };
+  const disarmIdle = () => { clearTimeout(idleTimer); idleTimer = null; };
+  const onUserAbort = () => ctl.abort(signal?.reason);
+  if (signal) {
+    if (signal.aborted) ctl.abort(signal.reason);
+    else signal.addEventListener('abort', onUserAbort, { once: true });
+  }
+
+  // Retry only the initial handshake (before streaming starts). Once the stream
+  // begins we cannot safely resume mid-stream.
+  let res = null;
+  let lastErr = null;
+  const attempts = Math.max(0, Math.round(retries)) + 1;
+  for (let i = 0; i < attempts; i++) {
+    if (ctl.signal.aborted) break;
+    try {
+      armIdle();
+      res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(bodyObj),
+        signal: ctl.signal,
+      });
+      disarmIdle();
+      break;
+    } catch (err) {
+      disarmIdle();
+      lastErr = err;
+      if (ctl.signal.aborted || i === attempts - 1) break;
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
+  }
+  if (!res) throw lastErr || new Error('Request failed');
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -232,9 +286,26 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     throw new Error(errMsg);
   }
 
+  // Non-streaming fallback: some backends ignore stream=true and return a plain
+  // JSON object. Handle that instead of crashing on res.body === null.
+  if (!res.body) {
+    const json = await res.json().catch(() => null);
+    if (json) {
+      const content = json.choices?.[0]?.message?.content;
+      if (content) yield content;
+      serverUsage = json.usage || null;
+    }
+    if (onMetrics) {
+      const metrics = extractServerMetrics(serverUsage);
+      if (metrics) onMetrics(metrics);
+    }
+    return;
+  }
+
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let reasoningOpen = false;
 
   const captureUsage = (json) => {
     if (json.usage && typeof json.usage === 'object') {
@@ -243,8 +314,24 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     }
   };
 
+  // Emit reasoning as an inline <think> block so the existing renderer folds it.
+  const emitDelta = (delta) => {
+    let out = '';
+    if (delta?.reasoning_content) {
+      if (!reasoningOpen) { reasoningOpen = true; out += '<think>'; }
+      out += delta.reasoning_content;
+    }
+    if (delta?.content) {
+      if (reasoningOpen) { reasoningOpen = false; out += '</think>'; }
+      out += delta.content;
+    }
+    return out;
+  };
+
   try {
+    let streamDone = false;
     while (true) {
+      armIdle();
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -258,17 +345,19 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
         if (!trimmed.startsWith('data: ')) continue;
 
         const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
+        if (data === '[DONE]') { streamDone = true; break; }
 
         try {
           const json = JSON.parse(data);
           captureUsage(json);
           const delta = json.choices?.[0]?.delta;
-          if (delta?.content) yield delta.content;
+          const text = emitDelta(delta);
+          if (text) yield text;
         } catch {
           // ignore malformed SSE lines
         }
       }
+      if (streamDone) break;
     }
 
     // flush any remaining buffer
@@ -279,11 +368,15 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
           const json = JSON.parse(data);
           captureUsage(json);
           const delta = json.choices?.[0]?.delta;
-          if (delta?.content) yield delta.content;
+          const text = emitDelta(delta);
+          if (text) yield text;
         } catch { /* ignore */ }
       }
     }
+    if (reasoningOpen) yield '</think>';
   } finally {
+    disarmIdle();
+    if (signal) signal.removeEventListener('abort', onUserAbort);
     // Emit whatever performance metrics the backend reported (normal end, early
     // stop, or abort). The frontend never fabricates these — no server data,
     // no metrics shown.
@@ -361,6 +454,89 @@ export async function generateImage(baseUrl, apiKey, model, prompt, options = {}
   return { images, seed: effectiveSeed };
 }
 
+/**
+ * Generates speech through an OpenAI-compatible `/v1/audio/speech` endpoint.
+ * Unlike the chat/image helpers, the successful response is binary audio.
+ */
+export async function generateSpeech(baseUrl, apiKey, model, input, options = {}) {
+  const {
+    responseFormat = 'wav',
+    seed = null,
+    signal,
+  } = options;
+
+  if (!String(input || '').trim()) {
+    throw new Error('Speech text is empty');
+  }
+
+  const seedInt = (seed !== null && seed !== '' && Number.isFinite(Number(seed)))
+    ? Math.floor(Number(seed)) : null;
+  const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
+
+  const res = await fetch(`${urlBase}/v1/audio/speech`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      input,
+      response_format: responseFormat,
+      ...(seedInt !== null ? { seed: seedInt } : {}),
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let errMsg = `Speech generation failed (${res.status})`;
+    try {
+      const json = JSON.parse(text);
+      errMsg = json.error?.message || errMsg;
+    } catch {
+      if (text) errMsg += ': ' + text.slice(0, 300);
+    }
+    throw new Error(errMsg);
+  }
+
+  const blob = await res.blob();
+  if (!blob?.size) {
+    throw new Error('Speech API returned an empty audio result');
+  }
+
+  return {
+    blob,
+    contentType: blob.type || `audio/${responseFormat}`,
+    seed: seedInt,
+  };
+}
+
+/**
+ * Heuristic repetition detector for streamed model output.
+ * Returns true when the tail of `text` ends with the same chunk repeated
+ * at least `minRepeats` times (classic "复读机" loop).
+ */
+export function isRepeatingOutput(text, {
+  minPeriod = 16,
+  maxPeriod = 300,
+  minRepeats = 4,
+  lookback = 2400,
+} = {}) {
+  if (!text || text.length < minPeriod * minRepeats) return false;
+  const tail = text.slice(-lookback);
+
+  for (let period = minPeriod; period <= maxPeriod; period++) {
+    if (period * minRepeats > tail.length) break;
+    const seg = tail.slice(-period);
+    if (!seg.trim()) continue;
+    let repeats = 1;
+    while ((repeats + 1) * period <= tail.length &&
+           tail.slice(-period * (repeats + 1), -period * repeats) === seg) {
+      repeats++;
+      if (repeats >= minRepeats) return true;
+    }
+  }
+  return false;
+}
+
 export function formatMessagesForApi(messages) {
   // Find the index of the last user message so we can preserve its media dataUrls.
   // Historical video messages are stripped (huge dataUrls, already processed by the model).
@@ -379,10 +555,14 @@ export function formatMessagesForApi(messages) {
 
     // For historical user messages: replace video_url parts with a text note so the
     // API payload stays small and uses only standard content types.
-    const content = msg.content.map(part => {
-      if (part?.type === 'video_url') return { type: 'text', text: '[Video attachment]' };
-      return part;
-    });
+    const nImages = msg.content.filter(part => part?.type === 'image_url').length;
+    const content = (nImages > 2
+      // many images means sampled video frames: drop them from history to keep payloads small
+      ? [{ type: 'text', text: `[Video attachment: ${nImages} frames]` }]
+      : msg.content.map(part => {
+          if (part?.type === 'video_url') return { type: 'text', text: '[Video attachment]' };
+          return part;
+        }));
     return { role: 'user', content };
   });
 }

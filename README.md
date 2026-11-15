@@ -2,7 +2,7 @@
 
 A lightweight, local-first chat UI for OpenAI-compatible APIs.
 
-It runs entirely in the browser, supports streaming responses, and stores conversations locally.
+It runs entirely in the browser, supports streaming responses and multimodal workflows, and stores conversations locally.
 
 ## Demo
 
@@ -16,15 +16,21 @@ The clip below shows SD 1.5 text-to-image and image-to-image generation, then Pa
 
 - OpenAI-compatible chat interface
 - Streaming responses
+- Configurable generation parameters and system prompt
 - Markdown rendering with code highlighting and KaTeX math
 - Collapsible thinking / reasoning blocks (`<think>` tags)
+- Reasoning deltas (`reasoning_content`) rendered as collapsible thinking
 - Image generation (Draw mode) and image-to-image via compatible image APIs
+- Speech generation (Speak mode) via compatible `/v1/audio/speech` APIs
 - Image upload and paste for vision-capable models
+- Browser-side video frame sampling for vision backends that accept images but not native video input
 - Audio transcription workflow for compatible APIs
+- Automatic audio-input detection for ASR models such as Qwen3-ASR
 - Multiple API endpoints with per-endpoint model management
-- Model capability configuration (Vision, Audio, Draw) per endpoint
+- Model capability configuration (Vision, Audio, Draw, Speak) per endpoint
 - Generated images stored as data URLs — persist after backend restart
 - Local conversation history in the browser
+- Conversation import and export as JSON
 - Configurable context window and auto-reset threshold
 - Per-response performance metrics — TTFT and decode speed — via an optional backend interface
 - Light and dark themes
@@ -39,6 +45,11 @@ The clip below shows SD 1.5 text-to-image and image-to-image generation, then Pa
   - `POST /v1/images/generations` or `POST /v1/images/edits`
 - Optional audio support:
   - `POST /v1/audio/transcriptions`
+- Optional speech generation:
+  - `POST /v1/audio/speech`
+
+See [API compatibility](#api-compatibility) below for the exact request shapes and
+the places where Lite WebUI uses backend extensions or compatibility adaptations.
 
 ## Quick Start
 
@@ -60,9 +71,10 @@ http://localhost:5173
 3. Enter your **API Key** if your provider requires one.
 4. Set **Max Context Tokens** to the real limit of your model.
 5. Adjust **Auto-reset Threshold (%)** if needed.
-6. Click **Fetch Models** — this saves the endpoint and fetches available models in one step.
-7. Enable the capabilities (**Vision**, **Audio**, **Draw**) that apply to each model.
-8. Select a model from the top bar.
+6. Optionally configure the system prompt, temperature, top-p, and maximum output tokens.
+7. Click **Fetch Models** — this saves the endpoint and fetches available models in one step.
+8. Enable the capabilities (**Vision**, **Audio**, **Draw**, **Speak**) that apply to each model.
+9. Select a model from the top bar.
 
 ![Settings screen](assets/settings.png)
 
@@ -89,6 +101,41 @@ http://127.0.0.1:11434/v1
 
 Add more than one endpoint in Settings to aggregate models from different servers. The model picker groups models by endpoint and switches the active endpoint automatically when you select a model.
 
+## API Compatibility
+
+Lite WebUI targets a practical OpenAI-compatible subset rather than every optional
+OpenAI product feature. The table below explains exactly what the browser sends.
+
+| Capability | Endpoint / request | Compatibility |
+|---|---|---|
+| Model list | `GET /v1/models` | Standard. Accepts `data[].id` and the common `models[].id` fallback. |
+| Chat | `POST /v1/chat/completions` with `stream: true` | Standard OpenAI Chat Completions fields: `model`, `messages`, `stream`, and optional `temperature`, `max_tokens`, `top_p`. The UI also sends `stream_options.include_usage`, which is an OpenAI field but may be ignored by lightweight backends. If a backend ignores streaming and returns normal JSON, the UI handles that fallback. |
+| Reasoning | SSE `choices[].delta.reasoning_content` | Common backend extension, not part of the core OpenAI Chat Completions schema. It is rendered as a collapsible `<think>` block. |
+| Vision images | Chat content parts of type `image_url` | Standard OpenAI Vision-compatible format. Images are sent as data URLs. |
+| Video upload | Browser samples frames, then sends multiple `image_url` parts | Deliberate compatibility adaptation; it is **not** a native OpenAI video API. This supports vision backends that accept several images but cannot ingest a merged `video_url`. |
+| Image generation | `POST /v1/images/generations` | OpenAI-compatible subset: `model`, `prompt`, `size`, `response_format`, and optional `seed`. `seed` is a backend extension used by several local inference servers. |
+| Image editing | `POST /v1/images/edits` multipart | OpenAI-compatible subset: `image`, `model`, `prompt`, `size`, `response_format`, and optional `seed`. |
+| Audio transcription | `POST /v1/audio/transcriptions` multipart | Standard OpenAI-compatible fields: `file`, `model`, `response_format=json`. The UI also accepts common response fields such as `text`, `transcript`, or `output_text`. |
+| Speech generation | `POST /v1/audio/speech` | OpenAI-compatible subset: `model`, `input`, `response_format`, plus optional backend extension `seed`. The UI requests one complete `wav` response and does not currently use streamed PCM. |
+| Performance metrics | Extra fields on the final SSE `usage` object | Backend extension. Generic OpenAI clients normally ignore unknown fields. |
+
+### VoxCPM2 model-name compatibility
+
+The current VoxCPM2 AX8860 server advertises a GGUF path from `/v1/models`, for example:
+
+```text
+gguf/VoxCPM2-BaseLM-F16.gguf
+```
+
+but its `/v1/audio/speech` endpoint expects the service model name:
+
+```text
+voxcpm2
+```
+
+When the selected model name contains `VoxCPM`, Lite WebUI keeps the advertised name
+in the UI but sends `voxcpm2` to `/v1/audio/speech`.
+
 ## Usage
 
 - **Send:** `Enter`
@@ -109,11 +156,74 @@ Add more than one endpoint in Settings to aggregate models from different server
 - Upload an image with the image button, or paste an image into the input box.
 - The current model must have **Vision** enabled.
 
+### Video
+
+- Upload a video with the image button when the selected model has **Vision** enabled.
+- Lite WebUI samples evenly spaced frames in the browser and sends them as multiple images.
+- **Settings → Video Input** controls:
+  - frames per video: `1–32`, default `8`
+  - maximum long-side resolution: default `448 px`
+- The original video remains visible in the chat history; only the sampled frames are sent in later API history.
+
 ### Audio
 
 - Attach an audio file from the input bar.
 - The current model must have **Audio** enabled.
 - Your API must support `POST /v1/audio/transcriptions`.
+- Models containing `ASR`, `Whisper`, `speech-to-text`, or `transcription` are detected automatically.
+- With no text instruction, the audio transcript is shown as the assistant response.
+- With a text instruction, the transcript and instruction are sent back to the selected model through `/v1/chat/completions`.
+
+### Context reset behaviour
+
+- `/reset` clears the API context while keeping earlier messages visible in the UI.
+- Switching to a different model or endpoint also starts a fresh API context, so the `ctx` badge returns to `0`.
+
+### Speech Generation (Speak Mode)
+
+- Enable **Speak** for the model in Settings. Models containing `VoxCPM` or `TTS` are detected automatically.
+- Click the **Speak** button in the input bar (auto-enabled for Speak-capable models).
+- Enter the text to synthesize and send it.
+- Play the returned audio directly in the conversation or download it as a WAV.
+- A seed can be set for reproducible VoxCPM2 generation.
+
+The frontend sends:
+
+```json
+POST /v1/audio/speech
+{
+  "model": "voxcpm2",
+  "input": "今天天气很好。",
+  "response_format": "wav"
+}
+```
+
+Generated audio is kept as a browser blob for the current page session. Conversation
+history stores only text and metadata, avoiding `localStorage` quota failures from
+large base64 WAV files. After a page refresh, regenerate the audio if needed.
+
+### Generation Parameters
+
+**Settings → Generation Parameters** supports:
+
+```text
+System Prompt
+Temperature
+Top P
+Max Output Tokens
+Auto-stop on repetition
+```
+
+Empty temperature, top-p, and max-output values omit the corresponding fields and
+let the backend use its default. The repetition detector is client-side and only
+stops a stream after repeated output patterns; it does not change sampling parameters.
+
+### Conversation Import / Export
+
+- **Export** writes the current conversation to a JSON file.
+- **Import** reads a conversation JSON file and creates a new local conversation.
+- Generated image data and metrics are included when present. Generated speech blobs
+  are intentionally not persisted because browser blob URLs are session-scoped.
 
 ### Context Badge
 
@@ -126,20 +236,18 @@ When usage approaches the configured threshold, the app automatically resets API
 
 ## Performance Metrics (TTFT, Prefill & Decode Speed)
 
-After each streamed response, a small metrics row appears under the assistant
-message. It is **fully data-driven**: the frontend renders one pill per metric
+After each streamed chat response, a small metrics row appears under the assistant
+message. Chat metrics are **data-driven**: the frontend renders one pill per metric
 the backend reported, in a fixed order, and nothing when none are present:
 
 ```text
 ⚡ TTFT 40 ms   ·   ⤴ prefill 220 tok/s   ·   ⏱ decode 36 tok/s   ·   in 43   ·   new 15   ·   out 512
 ```
 
-This is a display UI: **every number comes directly from the backend.** The
-frontend never estimates or derives any value — client-side wall-clock timing
-includes network / proxy overhead and would misrepresent real inference speed
-(e.g. ~100 ms measured in the browser vs. ~40 ms actual prefill), and token
-counts are tokenizer/model-specific, not a character count. Send a field and its
-pill appears; omit it and the pill is not shown.
+For chat, every TTFT, throughput, and token-count value comes directly from the backend.
+The frontend never estimates or derives those values. The exception is the `time` pill
+shown for speech generation: it is explicitly a client-measured end-to-end request
+duration and includes network overhead.
 
 ### The interface
 
@@ -222,6 +330,9 @@ Settings, model capability overrides, theme preference, and conversations are st
 
 Generated images are converted to base64 data URLs on receipt and stored alongside the conversation, so they remain visible even after the backend is restarted or the page is reloaded.
 
+Generated speech is intentionally not persisted as base64. The browser blob URL is
+valid only for the current page session.
+
 Clearing site storage resets the app.
 
 ## Troubleshooting
@@ -252,7 +363,24 @@ Clearing site storage resets the app.
 - Enable **Audio** for the selected model in **Settings**.
 - Confirm your backend supports audio transcription.
 
+### Speak button is disabled
+
+- Enable **Speak** for the selected model in **Settings**.
+- Confirm your backend supports `POST /v1/audio/speech`.
+
 ### Requests fail even though the server is reachable
 
 Make sure your backend is compatible with the OpenAI Chat Completions format, especially `model`, `messages`, and streaming responses.
+
+### Streaming stops with an idle-timeout warning
+
+Lite WebUI waits a maximum of 60 seconds between streamed chunks. A healthy long
+generation that keeps sending data is not interrupted. If no chunk arrives for
+60 seconds, the UI preserves the partial response and shows an idle-timeout warning.
+
+### Audio transcription succeeds but the follow-up instruction fails
+
+When an instruction is present, Lite WebUI sends the transcript and instruction to
+the selected model through `/v1/chat/completions`. A model that only implements
+`/v1/audio/transcriptions` cannot process that follow-up request.
 

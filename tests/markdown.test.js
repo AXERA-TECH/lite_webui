@@ -179,3 +179,15 @@ describe('renderMarkdown – literal escape sequences from backends', () => {
     expect(html).toContain('\\n');
   });
 });
+
+import { isRepeatingOutput } from '../src/api.js';
+
+describe('isRepeatingOutput', () => {
+  it('detects a repeated chunk loop', () => {
+    const loop = '我支持中文、英文、法文、德文、日文、韩文。'.repeat(6);
+    expect(isRepeatingOutput(loop)).toBe(true);
+  });
+  it('does not flag normal prose', () => {
+    expect(isRepeatingOutput('这是一段正常的回答，包含一些不同的内容，没有重复循环。'.repeat(2))).toBe(false);
+  });
+});

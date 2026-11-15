@@ -1,5 +1,5 @@
 import { store } from '../store.js';
-import { DEFAULT_CAPABILITIES } from '../capabilities.js';
+import { DEFAULT_CAPABILITIES, getCapabilities } from '../capabilities.js';
 import { fetchModels } from '../api.js';
 import {
   DEFAULT_CONTEXT_LIMIT_TOKENS,
@@ -62,6 +62,60 @@ export class SettingsModal {
                   <p class="mt-1 text-xs text-[var(--c-tx3)]">Resets API context when usage reaches this % of the configured window.</p>
                 </div>
                 <button id="settings-save" class="bg-[var(--c-tx)] text-[var(--c-bg)] font-medium text-sm px-4 py-2 rounded-lg hover:opacity-90 transition-opacity">Save Settings</button>
+              </div>
+            </section>
+            <!-- Video Input -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Video Input</h3>
+              <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-video-frames">Frames per video</label>
+                    <input id="settings-video-frames" type="number" min="1" max="32" step="1" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="8" />
+                    <p class="mt-1 text-xs text-[var(--c-tx3)]">1–32. Frames sampled in the browser and sent as images.</p>
+                  </div>
+                  <div>
+                    <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-video-frame-side">Frame max side (px)</label>
+                    <input id="settings-video-frame-side" type="number" min="128" max="1024" step="64" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="448" />
+                    <p class="mt-1 text-xs text-[var(--c-tx3)]">Longest side of each sampled frame.</p>
+                  </div>
+                </div>
+                <p id="settings-video-token-hint" class="text-xs text-[var(--c-tx3)]">≈1600 tokens total (≈200/frame).</p>
+              </div>
+            </section>
+            <!-- Generation Parameters -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Generation Parameters</h3>
+              <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-temperature">Temperature</label>
+                    <input id="settings-temperature" type="number" min="0" max="2" step="0.1" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="default" />
+                    <p class="mt-1 text-xs text-[var(--c-tx3)]">0–2. Empty = use server default.</p>
+                  </div>
+                  <div>
+                    <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-top-p">Top P</label>
+                    <input id="settings-top-p" type="number" min="0" max="1" step="0.05" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="default" />
+                    <p class="mt-1 text-xs text-[var(--c-tx3)]">0–1. Empty = server default.</p>
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-max-tokens">Max Output Tokens</label>
+                  <input id="settings-max-tokens" type="number" min="1" step="1" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="unlimited" />
+                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Per-response max_tokens. Empty = no limit (may over-generate).</p>
+                </div>
+                <label class="flex items-start gap-2.5 cursor-pointer select-none">
+                  <input id="settings-auto-stop" type="checkbox" class="mt-0.5 accent-[var(--c-tx)]" />
+                  <span class="text-xs text-[var(--c-tx2)]">
+                    Auto-stop on repetition
+                    <span class="block text-[var(--c-tx3)]">Stops the stream when the model repeats the same chunk 4+ times.</span>
+                  </span>
+                </label>
+                <div>
+                  <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-system-prompt">System Prompt</label>
+                  <textarea id="settings-system-prompt" rows="4" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="Optional system prompt prepended to every request"></textarea>
+                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Prepended as a system message to every request.</p>
+                </div>
               </div>
             </section>
           </div>
@@ -131,9 +185,7 @@ export class SettingsModal {
   _inlineCapsHtml(baseUrl, models) {
     const userCaps = store.getModelCapabilities(baseUrl);
     const rows = [...models].sort().map(modelId => {
-      const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false, imageGen: false };
-      const override = userCaps[modelId] || {};
-      const caps = { ...base, ...override };
+      const caps = getCapabilities(modelId, userCaps);
       return `
         <div class="flex items-center justify-between py-1.5 border-b border-[var(--c-bd)] last:border-0 gap-2" data-model="${modelId}">
           <span class="text-xs text-[var(--c-tx2)] truncate flex-1" title="${modelId}">${modelId}</span>
@@ -146,6 +198,9 @@ export class SettingsModal {
             </label>
             <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
               <input type="checkbox" class="cap-check accent-current" data-cap="imageGen" ${caps.imageGen ? 'checked' : ''} /> Draw
+            </label>
+            <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
+              <input type="checkbox" class="cap-check accent-current" data-cap="tts" ${caps.tts ? 'checked' : ''} /> Speak
             </label>
           </div>
         </div>
@@ -174,6 +229,9 @@ export class SettingsModal {
     });
 
     this.el.querySelector('#settings-save').addEventListener('click', () => this._saveSettings());
+    ['#settings-video-frames', '#settings-video-frame-side', '#settings-context-limit'].forEach((sel) => {
+      this.el.querySelector(sel)?.addEventListener('input', () => this._updateVideoTokenHint());
+    });
     this.el.querySelector('#add-endpoint-btn').addEventListener('click', () => this._addEndpoint());
 
     this._loadValues();
@@ -184,6 +242,18 @@ export class SettingsModal {
     this.el.querySelector('#settings-context-limit').value = settings.contextLimitTokens || '';
     this.el.querySelector('#settings-context-threshold').value =
       settings.contextResetThresholdPercent || DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
+    this.el.querySelector('#settings-temperature').value =
+      settings.temperature ?? '';
+    this.el.querySelector('#settings-top-p').value =
+      settings.topP ?? '';
+    this.el.querySelector('#settings-max-tokens').value =
+      settings.maxTokens ?? '';
+    this.el.querySelector('#settings-system-prompt').value =
+      settings.systemPrompt || '';
+    this.el.querySelector('#settings-auto-stop').checked = settings.autoStopRepetition !== false;
+    this.el.querySelector('#settings-video-frames').value = settings.videoFrames ?? 8;
+    this.el.querySelector('#settings-video-frame-side').value = settings.videoFrameMaxSide ?? 448;
+    this._updateVideoTokenHint();
 
     this._renderEndpointCards();
 
@@ -306,6 +376,31 @@ export class SettingsModal {
     }));
   }
 
+  _updateVideoTokenHint() {
+    const hint = this.el?.querySelector('#settings-video-token-hint');
+    if (!hint) return;
+    const frames = Number(this.el.querySelector('#settings-video-frames')?.value) || 8;
+    const side = Number(this.el.querySelector('#settings-video-frame-side')?.value) || 448;
+    // measured on AX8860: ~200 tokens for a 448px frame
+    const perFrame = Math.max(50, Math.round(200 * (side / 448) ** 2));
+    const total = frames * perFrame;
+    const ctx = store.getSettings().contextLimitTokens || 4096;
+    const pct = (total / ctx) * 100;
+    const maxFrames = Math.max(1, Math.floor((ctx * 0.8) / perFrame));
+
+    hint.classList.remove('text-[var(--c-tx3)]', 'text-rose-500', 'text-amber-500');
+    if (pct > 80) {
+      hint.classList.add('text-rose-500');
+      hint.textContent = `⚠ ≈${total.toLocaleString()} tokens = ${pct.toFixed(0)}% of ${ctx.toLocaleString()} context — too large. Use ≤ ${maxFrames} frames or a smaller side.`;
+    } else if (pct > 50) {
+      hint.classList.add('text-amber-500');
+      hint.textContent = `≈${total.toLocaleString()} tokens (≈${perFrame}/frame, ${pct.toFixed(0)}% of ${ctx.toLocaleString()} context) — getting large.`;
+    } else {
+      hint.classList.add('text-[var(--c-tx3)]');
+      hint.textContent = `≈${total.toLocaleString()} tokens total (≈${perFrame}/frame, ${pct.toFixed(1)}% of ${ctx.toLocaleString()} context).`;
+    }
+  }
+
   _saveSettings() {
     const rawContextLimit = this.el.querySelector('#settings-context-limit').value.trim();
     const contextLimitTokens = rawContextLimit
@@ -315,6 +410,22 @@ export class SettingsModal {
     const contextResetThresholdPercent = Number.isFinite(rawThreshold)
       ? Math.min(95, Math.max(50, Math.round(rawThreshold)))
       : DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
+
+    const rawTemp = this.el.querySelector('#settings-temperature').value.trim();
+    const rawTopP = this.el.querySelector('#settings-top-p').value.trim();
+    const rawMaxTokens = this.el.querySelector('#settings-max-tokens').value.trim();
+    const systemPrompt = this.el.querySelector('#settings-system-prompt').value.trim();
+    const temperature = rawTemp === '' ? null : Number(rawTemp);
+    const topP = rawTopP === '' ? null : Number(rawTopP);
+    const maxTokens = rawMaxTokens === '' ? null : Math.max(1, Math.round(Number(rawMaxTokens) || 0));
+
+    const autoStopRepetition = this.el.querySelector('#settings-auto-stop').checked;
+    const rawVideoFrames = Number(this.el.querySelector('#settings-video-frames').value);
+    const videoFrames = Number.isFinite(rawVideoFrames) && rawVideoFrames >= 1
+      ? Math.min(32, Math.round(rawVideoFrames)) : 8;
+    const rawFrameSide = Number(this.el.querySelector('#settings-video-frame-side').value);
+    const videoFrameMaxSide = Number.isFinite(rawFrameSide) && rawFrameSide >= 64
+      ? Math.min(1024, Math.round(rawFrameSide)) : 448;
 
     const endpoints = this._readEndpointCards();
     store.saveEndpoints(endpoints);
@@ -326,6 +437,13 @@ export class SettingsModal {
       apiKey: activeEp?.apiKey || '',
       contextLimitTokens,
       contextResetThresholdPercent,
+      temperature,
+      topP,
+      maxTokens,
+      systemPrompt,
+      videoFrames,
+      videoFrameMaxSide,
+      autoStopRepetition,
     });
 
     const btn = this.el.querySelector('#settings-save');
@@ -416,7 +534,7 @@ export class SettingsModal {
     const baseUrl = epModels?.dataset.epUrl || store.getSettings().baseUrl;
     const userCaps = store.getModelCapabilities(baseUrl);
     if (!userCaps[modelId]) {
-      const base = DEFAULT_CAPABILITIES[modelId] || { text: true, image: false, audio: false };
+      const base = DEFAULT_CAPABILITIES[modelId] || getCapabilities(modelId);
       userCaps[modelId] = { ...base };
     }
     userCaps[modelId][cap] = checkbox.checked;

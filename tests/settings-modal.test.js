@@ -30,6 +30,18 @@ describe('SettingsModal', () => {
     expect(modal.el.textContent).not.toContain('model-b');
   });
 
+  it('shows the Speak capability switch for TTS models', () => {
+    store.saveEndpoints([{ id: 'ep1', name: 'VoxCPM2', baseUrl: 'http://a.local', apiKey: '' }]);
+    store.saveAvailableModels('http://a.local', ['voxcpm2']);
+
+    const modal = mountModal();
+    const card = modal.el.querySelector('.endpoint-card[data-endpoint-id="ep1"]');
+    const checkbox = card?.querySelector('[data-model="voxcpm2"] [data-cap="tts"]');
+
+    expect(checkbox).not.toBeNull();
+    expect(checkbox.checked).toBe(true);
+  });
+
   it('saves fetched models under the current endpoint baseUrl', async () => {
     store.saveEndpoints([{ id: 'ep1', name: 'Local', baseUrl: 'http://a.local', apiKey: '' }]);
     store.setActiveEndpointId('ep1');

@@ -124,7 +124,13 @@ export class ModelPicker {
     const activeEp = store.getActiveEndpoint();
     const selected = activeEp ? store.getCurrentModel(activeEp.baseUrl) : '';
     const allModels = this._getAllModels();
-    this._currentModel = allModels.includes(selected) ? selected : '';
+    const nextModel = allModels.includes(selected) ? selected : '';
+    if (nextModel !== this._currentModel) {
+      this._currentModel = nextModel;
+      this._updateButton();
+      document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: nextModel } }));
+      return;
+    }
     this._updateButton();
   }
 
