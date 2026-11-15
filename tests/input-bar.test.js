@@ -349,6 +349,46 @@ describe('InputBar – auto draw mode', () => {
   });
 });
 
+// ─── Auto speak mode ──────────────────────────────────────────────────────────
+
+describe('InputBar – auto speak mode', () => {
+  afterEach(() => {
+    store.saveModelCapabilities({});
+  });
+
+  it('auto-enables TTS mode for voxcpm2', () => {
+    const bar = makeBar();
+    bar.setModel('voxcpm2');
+    expect(bar._ttsMode).toBe(true);
+    expect(bar._drawMode).toBe(false);
+  });
+
+  it('shows the speech placeholder and seed input', () => {
+    const bar = makeBar();
+    bar.setModel('voxcpm2');
+    expect(bar.el.querySelector('#message-input').placeholder).toBe('Enter text to speak…');
+    expect(bar.el.querySelector('#seed-wrapper').classList.contains('hidden')).toBe(false);
+  });
+
+  it('dispatches tts=true and keeps speak mode after submit', () => {
+    const bar = makeBar();
+    bar.setModel('voxcpm2');
+    const events = [];
+    const handler = (e) => events.push(e.detail);
+    document.addEventListener('inputbar:send', handler);
+
+    const textarea = bar.el.querySelector('#message-input');
+    textarea.value = '今天天气很好。';
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(events).toHaveLength(1);
+    expect(events[0].tts).toBe(true);
+    expect(events[0].text).toBe('今天天气很好。');
+    expect(bar._ttsMode).toBe(true);
+    document.removeEventListener('inputbar:send', handler);
+  });
+});
+
 describe('InputBar – multi-endpoint capability isolation', () => {
   afterEach(() => {
     store.saveModelCapabilities({});

@@ -4,6 +4,7 @@ import {
   fetchModels,
   streamCompletion,
   transcribeAudio,
+  generateSpeech,
   extractServerMetrics,
   formatTtft,
   formatTps,
@@ -191,6 +192,38 @@ describe('audio uploads', () => {
     expect(captured.body.get('file').name).toBe(file.name);
     expect(captured.body.get('file').type).toBe(file.type);
     expect(text).toBe('hello transcript');
+    vi.unstubAllGlobals();
+  });
+
+  it('generateSpeech posts JSON and returns the binary audio blob', async () => {
+    const captured = {};
+    vi.stubGlobal('fetch', vi.fn(async (url, opts) => {
+      captured.url = url;
+      captured.method = opts?.method;
+      captured.headers = opts?.headers ?? {};
+      captured.body = opts?.body;
+      return {
+        ok: true,
+        blob: async () => new Blob(['RIFF'], { type: 'audio/wav' }),
+      };
+    }));
+
+    const result = await generateSpeech('http://localhost:18082', '', 'voxcpm2', '今天天气很好。', {
+      seed: 42,
+    });
+
+    expect(captured.url).toBe('/lw-proxy/v1/audio/speech');
+    expect(captured.method).toBe('POST');
+    expect(captured.headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(captured.body)).toEqual({
+      model: 'voxcpm2',
+      input: '今天天气很好。',
+      response_format: 'wav',
+      seed: 42,
+    });
+    expect(result.contentType).toBe('audio/wav');
+    expect(result.seed).toBe(42);
+    expect(result.blob.size).toBeGreaterThan(0);
     vi.unstubAllGlobals();
   });
 });

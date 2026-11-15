@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_CAPABILITIES, getCapabilities, supportsImage, supportsAudio, supportsVideo } from '../src/capabilities.js';
+import { DEFAULT_CAPABILITIES, getCapabilities, supportsImage, supportsAudio, supportsVideo, supportsTTS } from '../src/capabilities.js';
 
 describe('DEFAULT_CAPABILITIES', () => {
   it('gpt-4o supports image', () => {
@@ -27,6 +27,19 @@ describe('getCapabilities', () => {
     expect(caps.text).toBe(true);
     expect(caps.image).toBe(false);
     expect(caps.audio).toBe(false);
+    expect(caps.tts).toBe(false);
+  });
+
+  it('detects VoxCPM2 as a TTS model', () => {
+    const caps = getCapabilities('VoxCPM2', {});
+    expect(caps.tts).toBe(true);
+    expect(supportsTTS('voxcpm2', {})).toBe(true);
+  });
+
+  it('detects Qwen3 ASR as an audio-input model', () => {
+    const caps = getCapabilities('qwen3-asr-1.7b', {});
+    expect(caps.audio).toBe(true);
+    expect(supportsAudio('qwen3-asr-1.7b', {})).toBe(true);
   });
 
   it('user override takes precedence over defaults', () => {

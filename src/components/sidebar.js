@@ -57,6 +57,15 @@ export class Sidebar {
           ${items || '<div class="px-4 py-10 text-center text-[11px] leading-relaxed text-[var(--c-side-tx3)]">No conversations yet.<br>Start a new chat!</div>'}
         </div>
         <div class="border-t border-[var(--c-side-bd)] px-3 py-3">
+          <div class="flex items-center gap-1.5 mb-2">
+            <button id="export-conv-btn" class="flex flex-1 items-center justify-center gap-1 rounded-lg border border-[var(--c-side-bd)] px-2 py-1.5 text-[11px] text-[var(--c-side-tx2)] transition-all hover:bg-[var(--c-side-el-h)] hover:text-[var(--c-side-tx)]" title="Export current conversation as JSON">
+              ${icon('download')} Export
+            </button>
+            <button id="import-conv-btn" class="flex flex-1 items-center justify-center gap-1 rounded-lg border border-[var(--c-side-bd)] px-2 py-1.5 text-[11px] text-[var(--c-side-tx2)] transition-all hover:bg-[var(--c-side-el-h)] hover:text-[var(--c-side-tx)]" title="Import a conversation JSON file">
+              ${icon('upload')} Import
+            </button>
+          </div>
+          <input id="import-conv-input" type="file" accept="application/json,.json" class="hidden" />
           <div class="flex items-center gap-2 rounded-xl px-1.5 py-1">
             <div class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-[var(--c-side-bd)] bg-[var(--c-side-el)]">
               <img src="/logo.svg" alt="" class="h-4 w-4 object-contain" aria-hidden="true" />
@@ -74,6 +83,21 @@ export class Sidebar {
   _bindEvents() {
     this.el.querySelector('#new-chat-btn').addEventListener('click', () => {
       document.dispatchEvent(new CustomEvent('sidebar:newchat'));
+    });
+
+    this.el.querySelector('#export-conv-btn').addEventListener('click', () => {
+      document.dispatchEvent(new CustomEvent('sidebar:export'));
+    });
+
+    this.el.querySelector('#import-conv-btn').addEventListener('click', () => {
+      this.el.querySelector('#import-conv-input').click();
+    });
+
+    this.el.querySelector('#import-conv-input').addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      document.dispatchEvent(new CustomEvent('sidebar:import', { detail: { file } }));
+      e.target.value = '';
     });
 
     this.el.querySelector('#conv-list').addEventListener('click', (e) => {

@@ -48,6 +48,7 @@ export class Chat {
     this._typingEl = null;
     this._errorEl = null;
     this._lightboxKeyHandler = null;
+    this._stick = true; // auto-follow the bottom; user can scroll away to pause
   }
 
   render() {
@@ -58,6 +59,13 @@ export class Chat {
         ${this._welcomeScreen()}
       </div>
     `;
+    const scrollContainer = el.querySelector('#chat-messages');
+    scrollContainer?.addEventListener('scroll', () => {
+      // Stick-to-bottom with user override: scrolling up pauses auto-follow,
+      // scrolling back near the bottom resumes it.
+      this._stick =
+        scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 120;
+    }, { passive: true });
     this.el = el;
     return this.el;
   }
@@ -145,9 +153,12 @@ export class Chat {
   _buildMessageEl(msg) {
     const isUser = msg.role === 'user';
     const text = getTextContent(msg);
-    const images = getImageParts(msg);
     const videos = getVideoParts(msg);
+    // Video messages are sent to the API as sampled stills; the UI keeps showing the full video.
+    const videoUrl = msg.videoUrl || videos[0]?.video_url?.url || '';
+    const images = videoUrl ? [] : getImageParts(msg);
     const genImages = msg.generatedImages || [];
+    const generatedAudio = msg.generatedAudio || null;
     const time = formatTime(msg.timestamp);
 
     const wrapper = document.createElement('div');
@@ -160,17 +171,17 @@ export class Chat {
         return `<img src="${src}" data-lightbox="1" alt="Attached image" class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] object-cover cursor-pointer mb-2 hover:opacity-90 transition-opacity" title="Click to expand" />`;
       }).join('');
 
-      const videoHtml = videos.map(vid => `
-        <video src="${escapeHtml(vid.video_url?.url || '')}" controls muted playsinline
+      const videoHtml = videoUrl ? `
+        <video src="${escapeHtml(videoUrl)}" controls muted playsinline
           class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] bg-black mb-2"></video>
-      `).join('');
+      ` : '';
 
       wrapper.innerHTML = `
         <div class="flex justify-end">
           <div class="max-w-[65%]">
             ${imageHtml}
             ${videoHtml}
-            ${text ? `<div class="user-bubble px-4 py-3 text-[13.5px] text-[var(--c-utx)] whitespace-pre-wrap break-words leading-relaxed">${escapeHtml(text)}</div>` : ''}
+            ${text ? `<div class="user-bubble px-4 py-3 msg-text text-[var(--c-utx)] whitespace-pre-wrap break-words">${escapeHtml(text)}</div>` : ''}
             ${time ? `<div class="text-[11px] text-[var(--c-tx3)] mt-1.5 text-right">${time}</div>` : ''}
           </div>
         </div>
@@ -308,6 +319,10 @@ export class Chat {
         this._renderAssistantBubble(text, msgDiv);
       }
 
+      if (generatedAudio) {
+        this._appendGeneratedAudio(msgDiv, generatedAudio, msg);
+      }
+
       if (time) {
         const timeEl = document.createElement('div');
         timeEl.className = 'text-[11px] text-[var(--c-tx3)] mt-2 flex items-center gap-1.5';
@@ -322,10 +337,38 @@ export class Chat {
       const metricsRow = this._buildMetricsRow(msg.metrics);
       if (metricsRow) msgDiv.appendChild(metricsRow);
 
+      // Regenerate button for the last assistant text message (not image gen).
+      if (genImages.length === 0 && !generatedAudio && this._isLastAssistant(msg)) {
+        const regenRow = document.createElement('div');
+        regenRow.className = 'mt-2';
+        const regenBtn = document.createElement('button');
+        regenBtn.type = 'button';
+        regenBtn.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors cursor-pointer';
+        regenBtn.innerHTML = `${icon('refresh')} Regenerate`;
+        regenBtn.title = 'Regenerate the last response';
+        regenBtn.addEventListener('click', () => {
+          document.dispatchEvent(new CustomEvent('chat:regenerate-text', {
+            detail: { msgTimestamp: msg.timestamp },
+          }));
+        });
+        regenRow.appendChild(regenBtn);
+        msgDiv.appendChild(regenRow);
+      }
+
       wrapper.appendChild(msgDiv);
     }
 
     return wrapper;
+  }
+
+  _isLastAssistant(msg) {
+    if (!msg || msg.role !== 'assistant') return false;
+    for (let i = this._messages.length - 1; i >= 0; i--) {
+      if (this._messages[i].role === 'assistant') {
+        return this._messages[i].timestamp === msg.timestamp;
+      }
+    }
+    return false;
   }
 
   // Renders an assistant text message into `container`, handling <think> blocks.
@@ -346,7 +389,7 @@ export class Chat {
       container.appendChild(details);
     }
     const bubble = document.createElement('div');
-    bubble.className = 'text-[13.5px] prose-dark leading-relaxed';
+    bubble.className = 'msg-text prose-dark';
     bubble.innerHTML = renderMarkdown(thinkText ? mainText : text);
     attachCopyButtons(bubble);
     container.appendChild(bubble);
@@ -360,6 +403,7 @@ export class Chat {
     if (!metrics) return null;
 
     const specs = [
+      { field: 'elapsedMs',        icon: 'clock',      label: 'time',     format: formatTtft, title: 'Client-measured request duration' },
       { field: 'ttftMs',          icon: 'zap',        label: 'TTFT',    format: formatTtft, title: 'Time to first token — reported by backend' },
       { field: 'prefillTps',      icon: 'trendingUp', label: 'prefill', format: formatTps,  title: 'Prefill speed — reported by backend' },
       { field: 'decodeTps',       icon: 'gauge',      label: 'decode',  format: formatTps,  title: 'Decode speed — reported by backend' },
@@ -424,6 +468,7 @@ export class Chat {
       </div>
     `;
     container.appendChild(this._typingEl);
+    this._stick = true; // a new turn always jumps back to the bottom
     this._scrollToBottom();
   }
 
@@ -445,7 +490,7 @@ export class Chat {
     msgDiv.className = 'w-full';
 
     const bubble = document.createElement('div');
-    bubble.className = 'text-[13.5px] prose-dark leading-relaxed';
+    bubble.className = 'msg-text prose-dark';
     bubble.innerHTML = '<span class="streaming-cursor opacity-60">▋</span>';
 
     msgDiv.appendChild(bubble);
@@ -501,6 +546,16 @@ export class Chat {
     this._streamingEl.innerHTML = mainText
       ? renderMarkdown(mainText) + cursor
       : cursor;
+
+    // The full re-render resets every <pre> scroll position; keep the active
+    // (last) code block pinned to its bottom so the newest lines stay visible.
+    if (this._stick) {
+      const pres = this._streamingEl.querySelectorAll('pre');
+      const activePre = pres[pres.length - 1];
+      if (activePre && activePre.scrollHeight > activePre.clientHeight) {
+        activePre.scrollTop = activePre.scrollHeight;
+      }
+    }
 
     this._scrollToBottom();
   }
@@ -612,6 +667,76 @@ export class Chat {
     this._scrollToBottom();
   }
 
+  appendGeneratedAudioMessage(msg) {
+    this.hideTypingIndicator();
+    const container = this.el.querySelector('#chat-messages');
+    if (!container) return;
+    this._messages.push(msg);
+    const el = this._buildMessageEl(msg);
+    container.appendChild(el);
+    this._scrollToBottom();
+  }
+
+  _appendGeneratedAudio(parent, generatedAudio, msg = {}) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mt-3';
+
+    if (generatedAudio.url) {
+      const player = document.createElement('audio');
+      player.controls = true;
+      player.preload = 'metadata';
+      player.className = 'w-full max-w-xl';
+      player.src = generatedAudio.url;
+      wrapper.appendChild(player);
+
+      const actionRow = document.createElement('div');
+      actionRow.className = 'mt-2 flex items-center gap-2 flex-wrap';
+
+      const downloadBtn = document.createElement('button');
+      downloadBtn.type = 'button';
+      downloadBtn.className = 'inline-flex items-center gap-1.5 text-[12px] text-[var(--c-tx3)] hover:text-[var(--c-tx2)] border border-[var(--c-bd)] rounded-lg px-3 py-1 transition-colors cursor-pointer';
+      downloadBtn.innerHTML = `${icon('download')} Download`;
+      downloadBtn.title = 'Download generated audio';
+      downloadBtn.addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.href = generatedAudio.url;
+        a.download = `speech-${(msg.timestamp || Date.now()).replace(/[^0-9]/g, '') || Date.now()}.${this._audioExtension(generatedAudio.contentType)}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      });
+      actionRow.appendChild(downloadBtn);
+
+      if (msg.generatedSeed != null) {
+        const seedBadge = document.createElement('span');
+        seedBadge.className = 'inline-flex items-center gap-1 text-[11px] font-mono text-[var(--c-tx3)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1 select-all';
+        seedBadge.title = 'Seed used for generation — click to copy';
+        seedBadge.textContent = `seed: ${msg.generatedSeed}`;
+        seedBadge.addEventListener('click', () => {
+          navigator.clipboard?.writeText(String(msg.generatedSeed)).catch(() => {});
+        });
+        actionRow.appendChild(seedBadge);
+      }
+
+      wrapper.appendChild(actionRow);
+    } else {
+      const notice = document.createElement('div');
+      notice.className = 'text-[12px] text-[var(--c-tx3)] border border-[var(--c-bd)] rounded-lg px-3 py-2';
+      notice.textContent = 'Audio is available during this page session. Refresh clears the binary blob; regenerate to play it again.';
+      wrapper.appendChild(notice);
+    }
+
+    parent.appendChild(wrapper);
+  }
+
+  _audioExtension(contentType = 'audio/wav') {
+    const type = String(contentType).toLowerCase();
+    if (type.includes('mpeg')) return 'mp3';
+    if (type.includes('ogg')) return 'ogg';
+    if (type.includes('webm')) return 'webm';
+    return 'wav';
+  }
+
   showError(message) {
     const container = this.el.querySelector('#chat-messages');
     this.hideTypingIndicator();
@@ -660,9 +785,11 @@ export class Chat {
     this._scrollToBottom();
   }
 
-  _scrollToBottom() {
+  _scrollToBottom(force = false) {
     const container = this.el.querySelector('#chat-messages');
     if (container) {
+      if (force) this._stick = true;
+      if (!this._stick) return;
       requestAnimationFrame(() => {
         container.scrollTop = container.scrollHeight;
       });

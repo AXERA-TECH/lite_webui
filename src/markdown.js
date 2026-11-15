@@ -76,8 +76,8 @@ renderer.code = function (code, lang, _escaped) {
   } catch {
     highlighted = escapeHtml(code);
   }
-  const langLabel = lang ? `<span class="code-lang-label">${lang}</span>` : '';
-  return `<div class="code-block-wrapper">${langLabel}<button class="copy-btn" aria-label="Copy code">Copy</button><pre><code class="hljs language-${lang || 'plaintext'}">${highlighted}</code></pre></div>`;
+  const langLabel = `<span class="code-lang-label">${lang || 'text'}</span>`;
+  return `<div class="code-block-wrapper"><div class="code-block-header">${langLabel}<button class="copy-btn" aria-label="Copy code">Copy</button></div><pre><code class="hljs language-${lang || 'plaintext'}">${highlighted}</code></pre></div>`;
 };
 
 renderer.codespan = function (code) {
@@ -243,7 +243,8 @@ export function parseThinkStream(text) {
 export function attachCopyButtons(container) {
   container.querySelectorAll('.copy-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const pre = btn.nextElementSibling;
+      const wrapper = btn.closest('.code-block-wrapper');
+      const pre = wrapper ? wrapper.querySelector('pre') : btn.nextElementSibling;
       const code = pre?.querySelector('code')?.textContent || '';
       try {
         await navigator.clipboard.writeText(code);

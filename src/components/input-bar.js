@@ -1,9 +1,20 @@
 import { store } from '../store.js';
 import { formatCompactTokenCount } from '../api.js';
-import { supportsAudio, supportsImage, supportsVideo, supportsImageGen, getCapabilities } from '../capabilities.js';
+import {
+  getCapabilities,
+  supportsAudio,
+  supportsImage,
+  supportsImageGen,
+  supportsTTS,
+  supportsVideo,
+} from '../capabilities.js';
 import { icon } from '../icons.js';
 
 const VIDEO_SIZE_LIMIT_MB = 50;
+// Video is sent as N still frames (the AX8860 vision backend cannot encode merged video frames).
+// Defaults live in the settings dialog (Video Input section).
+const DEFAULT_VIDEO_FRAME_COUNT = 8;
+const DEFAULT_VIDEO_FRAME_MAX_SIDE = 448;
 
 export class InputBar {
   constructor() {
@@ -14,6 +25,7 @@ export class InputBar {
     this._currentModel = '';
     this._sending = false;
     this._drawMode = false;
+    this._ttsMode = false;
   }
 
   render() {
@@ -30,18 +42,29 @@ export class InputBar {
     const videoSupported = supportsVideo(this._currentModel, store.getModelCapabilities());
     const audioSupported = supportsAudio(this._currentModel, store.getModelCapabilities());
     const imageGenSupported = supportsImageGen(this._currentModel, store.getModelCapabilities());
+    const ttsSupported = supportsTTS(this._currentModel, store.getModelCapabilities());
     const mediaSupported = imageSupported || videoSupported;
     const mediaAccept = [imageSupported && 'image/*', videoSupported && 'video/*'].filter(Boolean).join(',') || 'image/*,video/*';
     const mediaTitle = mediaSupported
       ? `Attach ${[imageSupported && 'image', videoSupported && 'video'].filter(Boolean).join(' / ')} (or paste)`
       : 'Vision not enabled for this model';
     const drawTitle = imageGenSupported ? 'Generate image (Draw mode)' : 'Image generation not enabled for this model';
-    const placeholder = this._drawMode ? 'Describe what to draw…' : 'Type a message…';
+    const speakTitle = ttsSupported ? 'Generate speech (Speak mode)' : 'Speech generation not enabled for this model';
+    const placeholder = this._drawMode
+      ? 'Describe what to draw…'
+      : this._ttsMode
+        ? 'Enter text to speak…'
+        : 'Type a message…';
+    const inputBoxClass = this._drawMode
+      ? 'border-violet-400 dark:border-violet-500'
+      : this._ttsMode
+        ? 'border-emerald-400 dark:border-emerald-500'
+        : 'border-[var(--c-bd)]';
     return `
       <div class="px-4 pb-4 pt-3 max-w-4xl mx-auto w-full">
         <input id="media-file-input" type="file" accept="${mediaAccept}" class="hidden" aria-label="Attach image or video" />
         <input id="audio-file-input" type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" class="hidden" aria-label="Attach audio" />
-        <div id="input-box" class="flex flex-col bg-[var(--c-card)] border ${this._drawMode ? 'border-violet-400 dark:border-violet-500' : 'border-[var(--c-bd)]'} rounded-2xl focus-within:border-[var(--c-bd-hi)] transition-all duration-200 shadow-lg shadow-black/10">
+        <div id="input-box" class="flex flex-col bg-[var(--c-card)] border ${inputBoxClass} rounded-2xl focus-within:border-[var(--c-bd-hi)] transition-all duration-200 shadow-lg shadow-black/10">
 
           <div id="image-preview-area" class="hidden px-3 pt-3 pb-1">
             <div class="relative inline-block">
@@ -87,7 +110,7 @@ export class InputBar {
 
           <textarea
             id="message-input"
-            class="bg-transparent px-4 pt-3 pb-1 text-[13.5px] text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none leading-relaxed resize-none w-full"
+            class="bg-transparent px-4 pt-3 pb-1 msg-text text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none resize-none w-full"
             placeholder="${placeholder}"
             rows="1"
             style="max-height: 144px; overflow-y: auto;"
@@ -117,8 +140,15 @@ export class InputBar {
                 title="${drawTitle}">
                 ${icon('wand')}
               </button>
+              <button id="tts-mode-btn"
+                class="flex items-center justify-center w-8 h-8 rounded-lg transition-all ${ttsSupported ? (this._ttsMode ? 'text-emerald-500 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30' : 'text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]') : 'text-[var(--c-tx3)] opacity-40 cursor-not-allowed'}"
+                ${ttsSupported ? '' : 'disabled'}
+                aria-label="Toggle speak mode"
+                title="${speakTitle}">
+                ${icon('speaker')}
+              </button>
             </div>
-            <div id="seed-wrapper" class="${this._drawMode ? 'flex' : 'hidden'} items-center gap-1.5 shrink-0">
+            <div id="seed-wrapper" class="${this._drawMode || this._ttsMode ? 'flex' : 'hidden'} items-center gap-1.5 shrink-0">
               <span class="text-[11px] text-[var(--c-tx3)] select-none">seed</span>
               <input id="seed-input" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="random"
                 class="w-[80px] text-[11px] font-mono text-[var(--c-tx2)] bg-[var(--c-hi)] border border-[var(--c-bd)] rounded-md px-2 py-0.5 placeholder-[var(--c-txph)] focus:outline-none focus:border-violet-400 dark:focus:border-violet-500 transition-colors"
@@ -154,6 +184,7 @@ export class InputBar {
     const mediaBtn = this.el.querySelector('#media-upload-btn');
     const audioBtn = this.el.querySelector('#audio-upload-btn');
     const drawBtn = this.el.querySelector('#draw-mode-btn');
+    const ttsBtn = this.el.querySelector('#tts-mode-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     const audioInput = this.el.querySelector('#audio-file-input');
     const removeImageBtn = this.el.querySelector('#remove-image-btn');
@@ -181,6 +212,9 @@ export class InputBar {
 
     drawBtn?.addEventListener('click', () => {
       if (!drawBtn.disabled) this._toggleDrawMode();
+    });
+    ttsBtn?.addEventListener('click', () => {
+      if (!ttsBtn.disabled) this._toggleTTSMode();
     });
 
     // Seed re-roll button
@@ -221,7 +255,7 @@ export class InputBar {
       this.setModel(e.detail.model);
     });
     document.addEventListener('caps:changed', () => {
-      this._updateAttachmentButtons();
+      this.setModel(this._currentModel);
     });
   }
 
@@ -256,8 +290,89 @@ export class InputBar {
     if (this._pendingAudio) this._clearAudio();
     if (this._pendingImage) this._clearImage();
     const dataUrl = await this._fileToDataUrl(file);
-    this._pendingVideo = { dataUrl, file };
+    const settings = store.getSettings();
+    const frameCount = settings.videoFrames || DEFAULT_VIDEO_FRAME_COUNT;
+    const maxSide = settings.videoFrameMaxSide || DEFAULT_VIDEO_FRAME_MAX_SIDE;
+    let frames = [];
+    try {
+      frames = await this._extractVideoFrames(dataUrl, frameCount, maxSide);
+    } catch (err) {
+      console.warn('[video] frame extraction failed, falling back to video_url:', err);
+    }
+    this._pendingVideo = { dataUrl, file, frames };
     this._showVideoPreview(dataUrl);
+    if (frames.length) this._showVideoFrameHint(frames.length, maxSide);
+  }
+
+  /**
+   * Sample `count` evenly spaced still frames from a video data URL.
+   * Frames are returned as JPEG data URLs (<= maxSide on the long side),
+   * which are then sent as individual image_url parts.
+   */
+  async _extractVideoFrames(dataUrl, count = DEFAULT_VIDEO_FRAME_COUNT, maxSide = DEFAULT_VIDEO_FRAME_MAX_SIDE) {
+    const video = document.createElement('video');
+    video.src = dataUrl;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+
+    await new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error('failed to load video'));
+      setTimeout(() => reject(new Error('video metadata timeout')), 10000);
+    });
+
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    if (!duration || !video.videoWidth) throw new Error('video has no duration/dimensions');
+
+    const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+    const w = Math.max(2, Math.round(video.videoWidth * scale));
+    const h = Math.max(2, Math.round(video.videoHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const t = Math.min(Math.max(0, duration - 0.05), (duration * (i + 0.5)) / count);
+      await new Promise((resolve) => {
+        const done = () => {
+          video.removeEventListener('seeked', done);
+          resolve();
+        };
+        video.addEventListener('seeked', done);
+        video.currentTime = t;
+        setTimeout(done, 3000);
+      });
+      ctx.drawImage(video, 0, 0, w, h);
+      frames.push(canvas.toDataURL('image/jpeg', 0.85));
+    }
+    return frames;
+  }
+
+  _showVideoFrameHint(n, side = DEFAULT_VIDEO_FRAME_MAX_SIDE) {
+    const area = this.el.querySelector('#video-preview-area');
+    if (!area) return;
+    let hint = area.querySelector('.video-frame-hint');
+    if (!hint) {
+      hint = document.createElement('div');
+      area.appendChild(hint);
+    }
+    const perFrame = Math.max(50, Math.round(200 * (side / 448) ** 2));
+    const total = n * perFrame;
+    const ctx = store.getSettings().contextLimitTokens || 4096;
+    const pct = (total / ctx) * 100;
+    hint.classList.remove('text-[var(--c-tx3)]', 'text-rose-500', 'text-amber-500');
+    hint.classList.add('text-[11px]', 'px-1', 'pb-1');
+    if (pct > 80) {
+      hint.classList.add('text-rose-500');
+      hint.textContent = `⚠ 将按 ${n} 帧发送，预计 ≈${total.toLocaleString()} token（${pct.toFixed(0)}% 上下文），可能超限`;
+    } else {
+      if (pct > 50) hint.classList.add('text-amber-500');
+      else hint.classList.add('text-[var(--c-tx3)]');
+      hint.textContent = `将按 ${n} 帧图片发送（单帧最长边 ${side}px，≈${total.toLocaleString()} token）`;
+    }
   }
 
   _handleMediaFile(file) {
@@ -314,6 +429,7 @@ export class InputBar {
   _clearVideo() {
     this._pendingVideo = null;
     const previewArea = this.el.querySelector('#video-preview-area');
+    previewArea?.querySelector('.video-frame-hint')?.remove();
     const player = this.el.querySelector('#video-preview-player');
     if (player) { player.pause(); player.src = ''; }
     previewArea?.classList.add('hidden');
@@ -376,6 +492,7 @@ export class InputBar {
     const video = this._pendingVideo;
     const audio = this._pendingAudio;
     const draw = this._drawMode;
+    const tts = this._ttsMode;
     // Capture seed before clearing draw mode (which resets the seed input)
     const seedEl = this.el.querySelector('#seed-input');
     const seedRaw = seedEl?.value?.trim() ?? '';
@@ -391,7 +508,7 @@ export class InputBar {
     this._autoResize(textarea);
 
     document.dispatchEvent(new CustomEvent('inputbar:send', {
-      detail: { text, image, video, audio, draw, seed },
+      detail: { text, image, video, audio, draw, tts, seed },
     }));
   }
 
@@ -399,49 +516,102 @@ export class InputBar {
     this._setDrawMode(!this._drawMode);
   }
 
+  _toggleTTSMode() {
+    this._setTTSMode(!this._ttsMode);
+  }
+
   _setDrawMode(active) {
+    const wasTTS = this._ttsMode;
     this._drawMode = active;
     if (active) {
+      this._ttsMode = false;
       // Keep pending image — it can be used as img2img source.
-      // Only clear video and audio (not useful for draw mode).
       if (this._pendingVideo) this._clearVideo();
       if (this._pendingAudio) this._clearAudio();
     }
-    // Update DOM in-place to avoid replacing this.el (which would detach event listeners
-    // and break textarea.value = '' in _submit, or cause duplicate document listeners).
-    const box = this.el.querySelector('#input-box');
-    if (box) {
-      if (active) {
-        box.classList.remove('border-[var(--c-bd)]');
-        box.classList.add('border-violet-400', 'dark:border-violet-500');
-      } else {
-        box.classList.remove('border-violet-400', 'dark:border-violet-500');
-        box.classList.add('border-[var(--c-bd)]');
-      }
+
+    this._applyModeStyles({
+      draw: active,
+      tts: active ? false : wasTTS,
+      drawPlaceholder: this._pendingImage ? 'Describe how to modify the image\u2026' : 'Describe what to draw\u2026',
+      ttsPlaceholder: 'Enter text to speak\u2026',
+      defaultPlaceholder: 'Type a message\u2026',
+      prefillSeed: true,
+    });
+  }
+
+  _setTTSMode(active) {
+    const wasDraw = this._drawMode;
+    this._ttsMode = active;
+    if (active) {
+      this._drawMode = false;
+      // TTS is text-only in this release.
+      if (this._pendingImage) this._clearImage();
+      if (this._pendingVideo) this._clearVideo();
+      if (this._pendingAudio) this._clearAudio();
     }
-    const textarea = this.el.querySelector('#message-input');
+
+    this._applyModeStyles({
+      draw: active ? false : wasDraw,
+      tts: active,
+      drawPlaceholder: 'Describe what to draw\u2026',
+      ttsPlaceholder: 'Enter text to speak\u2026',
+      defaultPlaceholder: 'Type a message\u2026',
+      prefillSeed: false,
+    });
+  }
+
+  _applyModeStyles({
+    draw = false,
+    tts = false,
+    drawPlaceholder = 'Describe what to draw\u2026',
+    ttsPlaceholder = 'Enter text to speak\u2026',
+    defaultPlaceholder = 'Type a message\u2026',
+    prefillSeed = false,
+  } = {}) {
+    const box = this.el?.querySelector('#input-box');
+    box?.classList.remove(
+      'border-[var(--c-bd)]',
+      'border-violet-400',
+      'dark:border-violet-500',
+      'border-emerald-400',
+      'dark:border-emerald-500',
+    );
+    if (draw) box?.classList.add('border-violet-400', 'dark:border-violet-500');
+    else if (tts) box?.classList.add('border-emerald-400', 'dark:border-emerald-500');
+    else box?.classList.add('border-[var(--c-bd)]');
+
+    const textarea = this.el?.querySelector('#message-input');
     if (textarea) {
-      textarea.placeholder = active
-        ? (this._pendingImage ? 'Describe how to modify the image\u2026' : 'Describe what to draw\u2026')
-        : 'Type a message\u2026';
+      textarea.placeholder = draw
+        ? drawPlaceholder
+        : tts
+          ? ttsPlaceholder
+          : defaultPlaceholder;
       textarea.focus();
     }
-    const drawBtn = this.el.querySelector('#draw-mode-btn');
+
+    const drawBtn = this.el?.querySelector('#draw-mode-btn');
     if (drawBtn && !drawBtn.disabled) {
-      drawBtn.className = active
+      drawBtn.className = draw
         ? 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-violet-500 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/30'
         : 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
     }
-    // Show/hide seed input
-    const seedWrapper = this.el.querySelector('#seed-wrapper');
-    const seedInput = this.el.querySelector('#seed-input');
+
+    const ttsBtn = this.el?.querySelector('#tts-mode-btn');
+    if (ttsBtn && !ttsBtn.disabled) {
+      ttsBtn.className = tts
+        ? 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-emerald-500 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30'
+        : 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
+    }
+
+    const seedWrapper = this.el?.querySelector('#seed-wrapper');
+    const seedInput = this.el?.querySelector('#seed-input');
     if (seedWrapper) {
-      if (active) {
+      if (draw || tts) {
         seedWrapper.classList.remove('hidden');
         seedWrapper.classList.add('flex');
-        // Pre-fill a random seed so every generation is reproducible by default.
-        // User can clear the field to get a truly random (un-seeded) result.
-        if (seedInput && !seedInput.value) {
+        if (prefillSeed && draw && seedInput && !seedInput.value) {
           seedInput.value = String(Math.floor(Math.random() * 1_000_000_000));
         }
       } else {
@@ -450,7 +620,7 @@ export class InputBar {
         if (seedInput) seedInput.value = '';
       }
     }
-    // Refresh media button (accept & enabled state changes with draw mode)
+
     this._updateAttachmentButtons();
   }
 
@@ -488,8 +658,11 @@ export class InputBar {
   setModel(modelId) {
     this._currentModel = modelId;
     const caps = getCapabilities(modelId, store.getModelCapabilities());
-    // Auto-enable draw mode for any imageGen-capable model (user-configured or built-in).
-    if (caps.imageGen && !this._drawMode) {
+    // Auto-enable the primary generation mode for image/TTS-capable models.
+    if (caps.tts) {
+      if (!this._ttsMode) this._setTTSMode(true);
+      else this._updateAttachmentButtons();
+    } else if (caps.imageGen && !this._drawMode) {
       this._setDrawMode(true); // calls _updateAttachmentButtons internally
     } else {
       this._updateAttachmentButtons();
@@ -500,12 +673,14 @@ export class InputBar {
     const mediaBtn = this.el.querySelector('#media-upload-btn');
     const audioBtn = this.el.querySelector('#audio-upload-btn');
     const drawBtn = this.el.querySelector('#draw-mode-btn');
+    const ttsBtn = this.el.querySelector('#tts-mode-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     if (!mediaBtn || !audioBtn) return;
     const imageSupported = supportsImage(this._currentModel, store.getModelCapabilities());
     const videoSupported = supportsVideo(this._currentModel, store.getModelCapabilities());
     const audioSupported = supportsAudio(this._currentModel, store.getModelCapabilities());
     const imageGenSupported = supportsImageGen(this._currentModel, store.getModelCapabilities());
+    const ttsSupported = supportsTTS(this._currentModel, store.getModelCapabilities());
     const mediaSupported = imageSupported || videoSupported;
 
     // In draw mode, always allow image attachment (for img2img), even if model lacks vision.
@@ -554,6 +729,21 @@ export class InputBar {
         drawBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
         drawBtn.title = 'Image generation not enabled for this model';
         if (this._drawMode) this._setDrawMode(false);
+      }
+    }
+
+    if (ttsBtn) {
+      if (ttsSupported) {
+        ttsBtn.disabled = false;
+        ttsBtn.className = this._ttsMode
+          ? 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-emerald-500 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30'
+          : 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
+        ttsBtn.title = 'Generate speech (Speak mode)';
+      } else {
+        ttsBtn.disabled = true;
+        ttsBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
+        ttsBtn.title = 'Speech generation not enabled for this model';
+        if (this._ttsMode) this._setTTSMode(false);
       }
     }
   }
