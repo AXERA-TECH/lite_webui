@@ -27,6 +27,8 @@ const DEFAULT_SETTINGS = {
   documentMaxChars: 24000,
   // Stop streaming automatically when the model falls into a repetition loop
   autoStopRepetition: true,
+  // VoxCPM2-style raw PCM streaming. Non-streaming WAV remains the fallback.
+  streamTTS: true,
 };
 
 const DEFAULT_PROMPTS = [
@@ -101,6 +103,7 @@ function normalizeSettings(settings = {}) {
     : DEFAULT_SETTINGS.videoFrames;
 
   merged.autoStopRepetition = merged.autoStopRepetition !== false;
+  merged.streamTTS = merged.streamTTS !== false;
 
   const videoFrameMaxSide = Number(merged.videoFrameMaxSide);
   merged.videoFrameMaxSide = Number.isFinite(videoFrameMaxSide) && videoFrameMaxSide >= 64

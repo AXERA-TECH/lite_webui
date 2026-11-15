@@ -16,6 +16,7 @@ import {
 } from '../documents.js';
 import { icon } from '../icons.js';
 import { resolveContextConfig } from '../context.js';
+import { MicrophoneRecorder } from '../audio.js';
 
 const VIDEO_SIZE_LIMIT_MB = 50;
 // Video is sent as N still frames (the AX8860 vision backend cannot encode merged video frames).
@@ -31,6 +32,13 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+function formatRecordingDuration(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+}
+
 export class InputBar {
   constructor() {
     this.el = null;
@@ -43,6 +51,8 @@ export class InputBar {
     this._drawMode = false;
     this._ttsMode = false;
     this._promptOpen = false;
+    this._recorder = null;
+    this._lastRecordingDuration = 0;
   }
 
   render() {
@@ -190,6 +200,14 @@ export class InputBar {
                 title="${audioSupported ? 'Attach audio for transcription or translation' : 'Audio not enabled for this model'}">
                 ${icon('audio')}
               </button>
+              <button id="record-audio-btn" type="button"
+                class="flex items-center justify-center w-8 h-8 rounded-lg transition-all ${audioSupported ? 'text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]' : 'text-[var(--c-tx3)] opacity-40 cursor-not-allowed'}"
+                ${audioSupported ? '' : 'disabled'}
+                aria-label="Record microphone"
+                aria-pressed="false"
+                title="${audioSupported ? 'Record microphone for ASR' : 'Audio not enabled for this model'}">
+                ${icon('mic')}
+              </button>
               <button id="draw-mode-btn"
                 class="flex items-center justify-center w-8 h-8 rounded-lg transition-all ${imageGenSupported ? (this._drawMode ? 'text-violet-500 dark:text-violet-400 bg-violet-100 dark:bg-violet-900/30' : 'text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]') : 'text-[var(--c-tx3)] opacity-40 cursor-not-allowed'}"
                 ${imageGenSupported ? '' : 'disabled'}
@@ -253,6 +271,7 @@ export class InputBar {
     const sendBtn = this.el.querySelector('#send-btn');
     const mediaBtn = this.el.querySelector('#media-upload-btn');
     const audioBtn = this.el.querySelector('#audio-upload-btn');
+    const recordBtn = this.el.querySelector('#record-audio-btn');
     const drawBtn = this.el.querySelector('#draw-mode-btn');
     const ttsBtn = this.el.querySelector('#tts-mode-btn');
     const promptBtn = this.el.querySelector('#prompt-btn');
@@ -326,6 +345,9 @@ export class InputBar {
     });
     audioBtn?.addEventListener('click', () => {
       if (!audioBtn.disabled) audioInput.click();
+    });
+    recordBtn?.addEventListener('click', () => {
+      if (!recordBtn.disabled) this._toggleMicrophone();
     });
     documentBtn?.addEventListener('click', () => {
       if (!documentBtn.disabled) documentInput.click();
@@ -638,6 +660,43 @@ export class InputBar {
     this._showAudioPreview();
   }
 
+  async _toggleMicrophone() {
+    if (this._recorder?.recording) {
+      const duration = this._recorder.duration;
+      const file = await this._recorder.stop();
+      this._lastRecordingDuration = duration;
+      this._recorder = null;
+      if (file) {
+        this._pendingAudio = { file, source: 'microphone' };
+        this._showAudioPreview();
+      } else {
+        this._clearAudio();
+      }
+      this._updateRecordButton();
+      return;
+    }
+
+    if (this._pendingAudio) this._clearAudio();
+    this._lastRecordingDuration = 0;
+    const recorder = new MicrophoneRecorder({
+      onDuration: (duration) => {
+        if (this._recorder === recorder) this._showAudioPreview(duration);
+      },
+    });
+
+    try {
+      this._recorder = recorder;
+      await recorder.start();
+      this._showAudioPreview(0);
+      this._updateRecordButton();
+      this.focus();
+    } catch (err) {
+      this._recorder = null;
+      this._showRecordingError(err.message);
+      this._updateRecordButton();
+    }
+  }
+
   _fileToDataUrl(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -683,19 +742,62 @@ export class InputBar {
     previewArea?.classList.add('hidden');
   }
 
-  _showAudioPreview() {
+  _showAudioPreview(duration = null) {
     const previewArea = this.el.querySelector('#audio-preview-area');
     const nameEl = this.el.querySelector('#audio-file-name');
-    if (!previewArea || !this._pendingAudio) return;
-    nameEl.textContent = this._pendingAudio.file?.name || 'audio';
+    const labelEl = this.el.querySelector('#audio-mode-label');
+    if (!previewArea || (!this._pendingAudio && !this._recorder?.recording)) return;
+    if (this._recorder?.recording) {
+      nameEl.textContent = 'Microphone';
+      if (labelEl) {
+        labelEl.textContent = `Recording · ${formatRecordingDuration(duration || this._recorder.duration)} · click the microphone button to stop`;
+        labelEl.className = 'text-[11px] text-rose-500';
+      }
+    } else {
+      nameEl.textContent = this._pendingAudio.file?.name || 'audio';
+      if (labelEl) {
+        const prefix = this._pendingAudio.source === 'microphone'
+          ? `Recorded ${formatRecordingDuration(this._lastRecordingDuration)}`
+          : 'Audio will be transcribed before text processing';
+        labelEl.textContent = prefix;
+        labelEl.className = 'text-[11px] text-[var(--c-tx3)]';
+      }
+    }
     previewArea.classList.remove('hidden');
   }
 
-  _clearAudio() {
+  _showRecordingError(message) {
+    const previewArea = this.el.querySelector('#audio-preview-area');
+    const nameEl = this.el.querySelector('#audio-file-name');
+    const labelEl = this.el.querySelector('#audio-mode-label');
+    previewArea?.classList.remove('hidden');
+    if (nameEl) nameEl.textContent = 'Microphone';
+    if (labelEl) {
+      labelEl.textContent = `Recording failed: ${message}`;
+      labelEl.className = 'text-[11px] text-rose-500';
+    }
+  }
+
+  _updateRecordButton() {
+    this._updateAttachmentButtons();
+  }
+
+  async _clearAudio({ cancelRecording = true } = {}) {
+    if (this._recorder?.recording && cancelRecording) {
+      await this._recorder.stop({ discard: true });
+      this._recorder = null;
+      this._updateRecordButton();
+    }
     this._pendingAudio = null;
+    this._lastRecordingDuration = 0;
     const previewArea = this.el.querySelector('#audio-preview-area');
     const nameEl = this.el.querySelector('#audio-file-name');
     if (nameEl) nameEl.textContent = '';
+    const labelEl = this.el.querySelector('#audio-mode-label');
+    if (labelEl) {
+      labelEl.textContent = 'Audio will be transcribed before text processing';
+      labelEl.className = 'text-[11px] text-[var(--c-tx3)]';
+    }
     previewArea?.classList.add('hidden');
   }
 
@@ -938,6 +1040,7 @@ export class InputBar {
     const drawBtn = this.el.querySelector('#draw-mode-btn');
     const ttsBtn = this.el.querySelector('#tts-mode-btn');
     const documentBtn = this.el.querySelector('#document-upload-btn');
+    const recordBtn = this.el.querySelector('#record-audio-btn');
     const fileInput = this.el.querySelector('#media-file-input');
     if (!mediaBtn || !audioBtn) return;
     const imageSupported = supportsImage(this._currentModel, store.getModelCapabilities());
@@ -1021,6 +1124,26 @@ export class InputBar {
         documentBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
         documentBtn.title = 'Attach TXT / Markdown / CSV / JSON / PDF / DOCX / XLSX';
       }
+    }
+
+    if (recordBtn) {
+      const audioSupported = supportsAudio(this._currentModel, store.getModelCapabilities());
+      const disabled = !audioSupported || this._drawMode || this._ttsMode;
+      recordBtn.disabled = disabled;
+      recordBtn.setAttribute('aria-pressed', String(Boolean(this._recorder?.recording)));
+      if (this._recorder?.recording) {
+        recordBtn.className = 'relative flex h-8 w-8 items-center justify-center rounded-lg bg-rose-100 text-rose-500 transition-all dark:bg-rose-900/30 dark:text-rose-400 animate-pulse';
+        recordBtn.title = 'Stop recording';
+      } else if (disabled) {
+        recordBtn.className = 'flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-tx3)] opacity-40 transition-all cursor-not-allowed';
+        recordBtn.title = this._drawMode || this._ttsMode
+          ? 'Microphone input is unavailable in Draw / Speak mode'
+          : 'Audio not enabled for this model';
+      } else {
+        recordBtn.className = 'flex h-8 w-8 items-center justify-center rounded-lg text-[var(--c-tx3)] transition-all hover:bg-[var(--c-hi)] hover:text-[var(--c-tx2)]';
+        recordBtn.title = 'Record microphone for ASR';
+      }
+      recordBtn.innerHTML = icon(this._recorder?.recording ? 'stop' : 'mic');
     }
   }
 

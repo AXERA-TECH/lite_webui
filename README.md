@@ -22,10 +22,12 @@ The clip below shows SD 1.5 text-to-image and image-to-image generation, then Pa
 - Reasoning deltas (`reasoning_content`) rendered as collapsible thinking
 - Image generation (Draw mode) and image-to-image via compatible image APIs
 - Speech generation (Speak mode) via compatible `/v1/audio/speech` APIs
+- VoxCPM2-style PCM speech streaming with live playback
 - Image upload and paste for vision-capable models
 - Browser-side video frame sampling for vision backends that accept images but not native video input
 - Browser-side document text extraction for TXT / Markdown / CSV / JSON / PDF / DOCX / XLSX
 - Audio transcription workflow for compatible APIs
+- Browser microphone recording for ASR
 - Automatic audio-input detection for ASR models such as Qwen3-ASR
 - Multiple API endpoints with per-endpoint model management
 - Service health panel with endpoint latency and model availability checks
@@ -123,7 +125,7 @@ OpenAI product feature. The table below explains exactly what the browser sends.
 | Image generation | `POST /v1/images/generations` | OpenAI-compatible subset: `model`, `prompt`, `size`, `response_format`, and optional `seed`. `seed` is a backend extension used by several local inference servers. |
 | Image editing | `POST /v1/images/edits` multipart | OpenAI-compatible subset: `image`, `model`, `prompt`, `size`, `response_format`, and optional `seed`. |
 | Audio transcription | `POST /v1/audio/transcriptions` multipart | Standard OpenAI-compatible fields: `file`, `model`, `response_format=json`. The UI also accepts common response fields such as `text`, `transcript`, or `output_text`. |
-| Speech generation | `POST /v1/audio/speech` | OpenAI-compatible subset: `model`, `input`, `response_format`, plus optional backend extension `seed`. The UI requests one complete `wav` response and does not currently use streamed PCM. |
+| Speech generation | `POST /v1/audio/speech` | OpenAI-compatible subset: `model`, `input`, `response_format`, plus optional backend extension `seed`. For VoxCPM2-style backends Lite WebUI can request `response_format=pcm` with `stream=true` and play chunks as they arrive; other backends use one complete `wav` response. |
 | Performance metrics | AXERA extension fields on `usage`, or native llama.cpp top-level `timings` | Backend-reported extension. Generic OpenAI clients normally ignore unknown fields. |
 
 ### VoxCPM2 model-name compatibility
@@ -190,6 +192,11 @@ in the UI but sends `voxcpm2` to `/v1/audio/speech`.
 ### Audio
 
 - Attach an audio file from the input bar.
+- Click the microphone button to record directly in the browser:
+  - recording is captured as mono 16 kHz PCM;
+  - it is encoded locally to WAV before upload;
+  - click the microphone button again to stop and attach;
+  - remove the preview while recording to cancel.
 - The current model must have **Audio** enabled.
 - Your API must support `POST /v1/audio/transcriptions`.
 - Models containing `ASR`, `Whisper`, `speech-to-text`, or `transcription` are detected automatically.
@@ -231,8 +238,11 @@ in the UI but sends `voxcpm2` to `/v1/audio/speech`.
 - Enter the text to synthesize and send it.
 - Play the returned audio directly in the conversation or download it as a WAV.
 - A seed can be set for reproducible VoxCPM2 generation.
+- When the selected model is VoxCPM2 and **Settings → Speech Generation → Stream PCM audio when available** is enabled, Lite WebUI requests a raw PCM stream and starts playback as chunks arrive.
+- The first playable audio latency is shown as `first audio`, followed by generated audio duration.
+- If the backend rejects PCM streaming before any audio arrives, Lite WebUI automatically retries with the WAV-compatible request.
 
-The frontend sends:
+Non-streaming backends receive:
 
 ```json
 POST /v1/audio/speech
@@ -242,6 +252,23 @@ POST /v1/audio/speech
   "response_format": "wav"
 }
 ```
+
+VoxCPM2 streaming backends receive:
+
+```json
+POST /v1/audio/speech
+{
+  "model": "voxcpm2",
+  "input": "今天天气很好。",
+  "response_format": "pcm",
+  "stream": true
+}
+```
+
+The response body is interpreted as little-endian signed 16-bit mono PCM. The
+sample rate is read from `X-Sample-Rate` or `Content-Type: audio/pcm;rate=...`;
+when absent, Lite WebUI assumes 48 kHz, matching the current VoxCPM2 AX8860 server.
+Streamed PCM is also wrapped into a local WAV blob for replay and download.
 
 Generated audio is kept as a browser blob for the current page session. Conversation
 history stores only text and metadata, avoiding `localStorage` quota failures from
@@ -290,9 +317,10 @@ the backend reported, in a fixed order, and nothing when none are present:
 ```
 
 For chat, every TTFT, throughput, and token-count value comes directly from the backend.
-The frontend never estimates or derives those values. The exception is the `time` pill
-shown for speech generation: it is explicitly a client-measured end-to-end request
-duration and includes network overhead.
+The frontend never estimates or derives those values. Speech metrics are labeled
+separately: `time` is client-measured end-to-end duration, `first audio` is the
+client-measured latency to the first playable PCM chunk, and `audio` is the generated
+audio duration derived from server-reported sample rate and received byte count.
 
 ### The interface
 
@@ -438,10 +466,25 @@ Clearing site storage resets the app.
 - Enable **Audio** for the selected model in **Settings**.
 - Confirm your backend supports audio transcription.
 
+### Microphone recording fails
+
+- Use `localhost`, `127.0.0.1`, or an HTTPS address. Browsers only expose `getUserMedia` in secure contexts.
+- Allow microphone permission when the browser prompts.
+- Check that no other application has exclusive control of the microphone.
+- The recording is converted to 16 kHz mono WAV in the browser; no third-party service receives the raw microphone stream.
+
 ### Speak button is disabled
 
 - Enable **Speak** for the selected model in **Settings**.
 - Confirm your backend supports `POST /v1/audio/speech`.
+
+### PCM speech streaming falls back to WAV
+
+Lite WebUI only tries PCM streaming for VoxCPM2-style models and only when at least
+one PCM-capable endpoint returns audio. If the backend rejects `response_format=pcm`,
+returns JSON, or disconnects before the first audio chunk, Lite WebUI retries using
+`response_format=wav`. Disable **Settings → Speech Generation → Stream PCM audio
+when available** to force WAV for every request.
 
 ### Requests fail even though the server is reachable
 

@@ -83,6 +83,17 @@ export class SettingsModal {
                 <p id="settings-video-token-hint" class="text-xs text-[var(--c-tx3)]">≈1600 tokens total (≈200/frame).</p>
               </div>
             </section>
+            <!-- Speech Generation -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Speech Generation</h3>
+              <label class="flex items-start gap-2.5 cursor-pointer select-none">
+                <input id="settings-stream-tts" type="checkbox" class="mt-0.5 accent-[var(--c-tx)]" />
+                <span class="text-xs text-[var(--c-tx2)]">
+                  Stream PCM audio when available
+                  <span class="block text-[var(--c-tx3)]">Plays VoxCPM2-style PCM responses while they are generated. Falls back to WAV if the backend rejects streaming.</span>
+                </span>
+              </label>
+            </section>
             <!-- Document Input -->
             <section class="border-t border-[var(--c-bd)] pt-6">
               <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Document Input</h3>
@@ -263,6 +274,7 @@ export class SettingsModal {
     this.el.querySelector('#settings-system-prompt').value =
       settings.systemPrompt || '';
     this.el.querySelector('#settings-auto-stop').checked = settings.autoStopRepetition !== false;
+    this.el.querySelector('#settings-stream-tts').checked = settings.streamTTS !== false;
     this.el.querySelector('#settings-video-frames').value = settings.videoFrames ?? 8;
     this.el.querySelector('#settings-video-frame-side').value = settings.videoFrameMaxSide ?? 448;
     this.el.querySelector('#settings-document-max-chars').value = settings.documentMaxChars ?? 24000;
@@ -433,6 +445,7 @@ export class SettingsModal {
     const maxTokens = rawMaxTokens === '' ? null : Math.max(1, Math.round(Number(rawMaxTokens) || 0));
 
     const autoStopRepetition = this.el.querySelector('#settings-auto-stop').checked;
+    const streamTTS = this.el.querySelector('#settings-stream-tts').checked;
     const rawVideoFrames = Number(this.el.querySelector('#settings-video-frames').value);
     const videoFrames = Number.isFinite(rawVideoFrames) && rawVideoFrames >= 1
       ? Math.min(32, Math.round(rawVideoFrames)) : 8;
@@ -461,6 +474,7 @@ export class SettingsModal {
       videoFrameMaxSide,
       documentMaxChars,
       autoStopRepetition,
+      streamTTS,
     });
 
     const btn = this.el.querySelector('#settings-save');

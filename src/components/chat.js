@@ -540,13 +540,15 @@ export class Chat {
   // Builds the performance-metrics pill row shown under an assistant message.
   // Fully data-driven: one pill per recognized metric the backend reported, in
   // the fixed order below; nothing renders when none are present. The UI never
-  // computes any value — see extractServerMetrics().
+  // computes chat token metrics — see extractServerMetrics(). Speech latency is
+  // explicitly client-measured and labeled separately.
   _buildMetricsRow(metrics) {
     if (!metrics) return null;
 
     const specs = [
       { field: 'elapsedMs',        icon: 'clock',      label: 'time',     format: formatTtft, title: 'Client-measured request duration' },
       { field: 'ttftMs',          icon: 'zap',        label: 'TTFT',    format: formatTtft, title: 'Time to first token — reported by backend' },
+      { field: 'firstAudioMs',    icon: 'zap',        label: 'first audio', format: formatTtft, title: 'Client-measured time to first playable audio chunk' },
       { field: 'prefillTps',      icon: 'trendingUp', label: 'prefill', format: formatTps,  title: 'Prefill speed — reported by backend' },
       { field: 'decodeTps',       icon: 'gauge',      label: 'decode',  format: formatTps,  title: 'Decode speed — reported by backend' },
       { field: 'inputTokens',     icon: '',           label: 'in',      format: String,     title: 'Input tokens — reported by backend' },
@@ -554,6 +556,7 @@ export class Chat {
         title: 'Tokens newly prefilled this turn (the rest were reused from KV cache)',
         when: (m) => m.inputTokens != null && m.prefillTokens < m.inputTokens },
       { field: 'completionTokens', icon: '',          label: 'out',     format: String,     title: 'Output tokens — reported by backend' },
+      { field: 'audioSeconds',    icon: 'clock',      label: 'audio',   format: String,     title: 'Generated audio duration in seconds' },
     ];
 
     const pills = [];
@@ -848,6 +851,14 @@ export class Chat {
         a.remove();
       });
       actionRow.appendChild(downloadBtn);
+
+      if (generatedAudio.streamed) {
+        const streamBadge = document.createElement('span');
+        streamBadge.className = 'inline-flex items-center gap-1 text-[11px] text-emerald-500 border border-emerald-500/30 rounded-lg px-2.5 py-1';
+        streamBadge.textContent = 'streamed PCM';
+        streamBadge.title = 'Audio was played while PCM chunks arrived from the backend';
+        actionRow.appendChild(streamBadge);
+      }
 
       if (msg.generatedSeed != null) {
         const seedBadge = document.createElement('span');

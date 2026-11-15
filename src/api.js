@@ -568,6 +568,82 @@ export async function generateSpeech(baseUrl, apiKey, model, input, options = {}
   };
 }
 
+export function parsePcmSampleRate(headers, fallback = 48000) {
+  const explicit = headers?.get?.('x-sample-rate') || headers?.get?.('x-audio-sample-rate');
+  if (explicit && Number.isFinite(Number(explicit))) return Math.round(Number(explicit));
+
+  const contentType = String(headers?.get?.('content-type') || '');
+  const match = /(?:rate|sample[-_]?rate)\s*=\s*(\d+)/i.exec(contentType);
+  if (match && Number.isFinite(Number(match[1]))) return Math.round(Number(match[1]));
+  return fallback;
+}
+
+/**
+ * Opens a raw PCM speech stream. Each yielded value is one binary network
+ * chunk, normally little-endian signed 16-bit mono PCM.
+ */
+export async function* streamSpeech(baseUrl, apiKey, model, input, options = {}) {
+  const {
+    seed = null,
+    signal,
+    onResponse,
+  } = options;
+
+  if (!String(input || '').trim()) throw new Error('Speech text is empty');
+  const seedInt = (seed !== null && seed !== '' && Number.isFinite(Number(seed)))
+    ? Math.floor(Number(seed)) : null;
+  const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
+  const res = await fetch(`${urlBase}/v1/audio/speech`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      input,
+      response_format: 'pcm',
+      stream: true,
+      ...(seedInt !== null ? { seed: seedInt } : {}),
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let errMsg = `Speech generation failed (${res.status})`;
+    try {
+      const json = JSON.parse(text);
+      errMsg = json.error?.message || errMsg;
+    } catch {
+      if (text) errMsg += ': ' + text.slice(0, 300);
+    }
+    throw new Error(errMsg);
+  }
+
+  const contentType = res.headers?.get?.('content-type') || '';
+  const sampleRate = parsePcmSampleRate(res.headers, 48000);
+  onResponse?.({ contentType, sampleRate });
+
+  if (/json/i.test(contentType)) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Speech stream returned JSON instead of PCM: ${text.slice(0, 200)}`);
+  }
+  if (!res.body) {
+    const buffer = await res.arrayBuffer();
+    if (buffer.byteLength) yield buffer;
+    return;
+  }
+
+  const reader = res.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value?.byteLength) yield value;
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+}
+
 /**
  * Heuristic repetition detector for streamed model output.
  * Returns true when the tail of `text` ends with the same chunk repeated

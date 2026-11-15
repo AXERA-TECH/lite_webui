@@ -5,10 +5,12 @@ import {
   transcribeAudio,
   generateImage,
   generateSpeech,
+  streamSpeech,
   isRepeatingOutput,
 } from '../api.js';
 import { estimateThreadTokens, resolveContextConfig } from '../context.js';
 import { formatDocumentForModel } from '../documents.js';
+import { PcmStreamPlayer, pcmBytesToWavBlob } from '../audio.js';
 import { Sidebar } from './sidebar.js';
 import { Chat } from './chat.js';
 import { InputBar } from './input-bar.js';
@@ -985,16 +987,18 @@ export class App {
     const cfg = this._getApiConfig();
 
     try {
-      const started = performance.now();
       // VoxCPM2's `/v1/models` currently advertises the BaseLM GGUF path, while
       // `/v1/audio/speech` expects the stable `voxcpm2` service model name.
       const requestModel = /voxcpm/i.test(model) ? 'voxcpm2' : model;
-      const result = await generateSpeech(cfg.baseUrl, cfg.apiKey, requestModel, text, {
+      const result = await this._generateSpeechResult({
+        cfg,
+        model: requestModel,
+        text,
         seed,
         signal,
+        settings: store.getSettings(),
       });
       const url = this._createObjectUrl(result.blob);
-      const elapsedMs = Math.round(performance.now() - started);
       const assistantMessage = {
         role: 'assistant',
         content: '语音已生成',
@@ -1004,11 +1008,10 @@ export class App {
           ...(url ? { url } : {}),
           contentType: result.contentType,
           sizeBytes: result.blob.size,
+          ...(result.metrics?.streamed ? { streamed: true, sampleRate: result.metrics.sampleRate } : {}),
         },
         ...(result.seed !== null ? { generatedSeed: result.seed } : {}),
-        metrics: {
-          elapsedMs,
-        },
+        metrics: result.metrics,
         timestamp: new Date().toISOString(),
       };
 
@@ -1021,6 +1024,7 @@ export class App {
         generatedAudio: {
           contentType: result.contentType,
           sizeBytes: result.blob.size,
+          ...(result.metrics?.streamed ? { streamed: true, sampleRate: result.metrics.sampleRate } : {}),
         },
       };
       store.addMessage(convId, persistentMessage);
@@ -1038,6 +1042,74 @@ export class App {
       this.inputBar.setSending(false);
       this.inputBar.focus();
     }
+  }
+
+  async _generateSpeechResult({ cfg, model, text, seed, signal, settings }) {
+    const started = performance.now();
+    const canStream = /voxcpm/i.test(model)
+      && settings.streamTTS !== false
+      && Boolean(window.AudioContext || window.webkitAudioContext);
+
+    if (canStream) {
+      const chunks = [];
+      let player = null;
+      let sampleRate = 48000;
+      let firstAudioMs = null;
+
+      try {
+        for await (const networkChunk of streamSpeech(cfg.baseUrl, cfg.apiKey, model, text, {
+          seed,
+          signal,
+          onResponse: (response) => {
+            sampleRate = response.sampleRate || sampleRate;
+          },
+        })) {
+          const chunk = networkChunk.slice(0, networkChunk.byteLength);
+          if (!player) {
+            player = new PcmStreamPlayer(sampleRate);
+            await player.start();
+          }
+          player.push(chunk);
+          chunks.push(chunk);
+          if (firstAudioMs === null) firstAudioMs = Math.round(performance.now() - started);
+        }
+
+        await player?.finish();
+        if (!chunks.length) throw new Error('Speech stream returned no audio');
+
+        const blob = pcmBytesToWavBlob(chunks, sampleRate);
+        return {
+          blob,
+          contentType: 'audio/wav',
+          seed,
+          metrics: {
+            elapsedMs: Math.round(performance.now() - started),
+            ttftMs: firstAudioMs,
+            firstAudioMs,
+            audioSeconds: Math.round((blob.size - 44) / 2 / sampleRate * 10000) / 10000,
+            sampleRate,
+            streamed: true,
+          },
+        };
+      } catch (err) {
+        await player?.stop().catch(() => {});
+        if (err.name === 'AbortError' || chunks.length) throw err;
+        // Some OpenAI-compatible TTS servers reject response_format=pcm. If no
+        // audio arrived, transparently retry with the WAV-compatible request.
+        console.warn('[tts] PCM streaming unavailable, falling back to WAV:', err.message);
+      }
+    }
+
+    const result = await generateSpeech(cfg.baseUrl, cfg.apiKey, model, text, {
+      seed,
+      signal,
+    });
+    return {
+      ...result,
+      metrics: {
+        elapsedMs: Math.round(performance.now() - started),
+      },
+    };
   }
 
   async _handleAudioTask({ convId, model, instruction, audio }) {
