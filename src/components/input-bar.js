@@ -63,6 +63,8 @@ export class InputBar {
   }
 
   render() {
+    this._inputResizeObserver?.disconnect();
+    if (this._inputResizeFallback) window.removeEventListener('resize', this._inputResizeFallback);
     const el = document.createElement('div');
     el.className = 'border-t border-[var(--c-bd)] bg-[var(--c-bg)]';
     el.innerHTML = this._template();
@@ -190,7 +192,7 @@ export class InputBar {
             class="bg-transparent px-4 pt-3 pb-1 msg-text text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none resize-none w-full"
             placeholder="${placeholder}"
             rows="1"
-            style="max-height: 144px; overflow-y: auto;"
+            style="max-height: 144px; overflow-y: hidden;"
             aria-label="Message input"
             title="Enter to send · Shift+Enter for new line · ↑ in an empty input browses your message history"
           ></textarea>
@@ -293,6 +295,23 @@ export class InputBar {
     const removeImageBtn = this.el.querySelector('#remove-image-btn');
     const removeVideoBtn = this.el.querySelector('#remove-video-btn');
     const removeAudioBtn = this.el.querySelector('#remove-audio-btn');
+
+    // Width changes can add/remove wrapped lines without an input event.
+    const resizeInput = () => this._autoResize(textarea);
+    queueMicrotask(resizeInput);
+    if (typeof ResizeObserver === 'function') {
+      let previousWidth = 0;
+      this._inputResizeObserver = new ResizeObserver(() => {
+        const width = textarea.getBoundingClientRect().width;
+        if (width <= 0 || width === previousWidth) return;
+        previousWidth = width;
+        resizeInput();
+      });
+      this._inputResizeObserver.observe(textarea);
+    } else {
+      this._inputResizeFallback = resizeInput;
+      window.addEventListener('resize', resizeInput);
+    }
 
     // Auto-resize textarea
     textarea.addEventListener('input', () => {
@@ -422,10 +441,16 @@ export class InputBar {
   }
 
   _autoResize(textarea) {
+    if (!textarea.isConnected || textarea.getBoundingClientRect().width <= 0) return;
+    // Remove the old scrollbar before measuring at the full available width.
+    textarea.style.overflowY = 'hidden';
     textarea.style.height = 'auto';
-    const scrollH = textarea.scrollHeight;
-    const maxH = 144; // max-height ~6 rows
-    textarea.style.height = Math.min(scrollH, maxH) + 'px';
+    const style = getComputedStyle(textarea);
+    const borders = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    const maxH = 144;
+    const height = Math.min(Math.ceil(textarea.scrollHeight + borders), maxH);
+    textarea.style.height = `${height}px`;
+    textarea.style.overflowY = height === maxH && textarea.scrollHeight > textarea.clientHeight ? 'auto' : 'hidden';
   }
 
   _togglePromptPanel(force = !this._promptOpen) {

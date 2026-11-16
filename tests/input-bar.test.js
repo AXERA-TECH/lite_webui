@@ -766,3 +766,67 @@ it('ignores late video frame extraction after selecting another attachment', asy
   expect(bar._pendingVideo).toBeNull(); expect(bar._pendingAudio.file).toBe(audio);
   expect(bar.el.querySelector('.video-frame-hint')).toBeNull();
 });
+
+describe('InputBar – textarea sizing', () => {
+  function geometry(textarea, initial = 42) {
+    let width = 600;
+    let contentHeight = initial;
+    textarea.style.borderWidth = '0px';
+    vi.spyOn(textarea, 'getBoundingClientRect').mockImplementation(() => ({ width }));
+    Object.defineProperty(textarea, 'scrollHeight', { configurable: true, get: () => contentHeight });
+    Object.defineProperty(textarea, 'clientHeight', { configurable: true, get: () => Number.parseFloat(textarea.style.height) || 42 });
+    return { width: value => { width = value; }, content: value => { contentHeight = value; } };
+  }
+
+  it('measures on mount, grows up to 144px, and only enables scrolling for real overflow', async () => {
+    const bar = makeBar(); const textarea = bar.el.querySelector('#message-input'); const size = geometry(textarea);
+    await Promise.resolve(); expect(textarea.style.height).toBe('42px'); expect(textarea.style.overflowY).toBe('hidden');
+    for (const height of [69, 95, 143, 144]) {
+      size.content(height); textarea.dispatchEvent(new Event('input'));
+      expect(textarea.style.height).toBe(`${height}px`); expect(textarea.style.overflowY).toBe('hidden');
+    }
+    size.content(541); textarea.dispatchEvent(new Event('input'));
+    expect(textarea.style.height).toBe('144px'); expect(textarea.style.overflowY).toBe('auto');
+    size.content(42); textarea.value = ''; textarea.dispatchEvent(new Event('input'));
+    expect(textarea.style.height).toBe('42px'); expect(textarea.style.overflowY).toBe('hidden');
+  });
+
+  it('remeasures changed width and ignores its own height/scrollbar notifications', () => {
+    let notify; const disconnect = vi.fn(); const observe = vi.fn();
+    vi.stubGlobal('ResizeObserver', class { constructor(callback) { notify = callback; } observe = observe; disconnect = disconnect; });
+    try {
+      const bar = makeBar(); const textarea = bar.el.querySelector('#message-input'); const size = geometry(textarea, 95);
+      const resize = vi.spyOn(bar, '_autoResize');
+      notify(); expect(textarea.style.height).toBe('95px'); expect(observe).toHaveBeenCalledWith(textarea);
+      size.width(300); size.content(174); notify(); expect(textarea.style.height).toBe('144px'); expect(textarea.style.overflowY).toBe('auto');
+      const calls = resize.mock.calls.length; notify(); expect(resize).toHaveBeenCalledTimes(calls);
+      size.width(600); size.content(95); notify(); expect(textarea.style.height).toBe('95px'); expect(textarea.style.overflowY).toBe('hidden');
+      bar.render(); expect(disconnect).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('handles window resizing when ResizeObserver is unavailable and leaves hidden inputs uncollapsed', () => {
+    vi.stubGlobal('ResizeObserver', undefined);
+    try {
+      const bar = makeBar(); const textarea = bar.el.querySelector('#message-input'); const size = geometry(textarea, 95);
+      window.dispatchEvent(new Event('resize')); expect(textarea.style.height).toBe('95px');
+      size.width(300); size.content(174); window.dispatchEvent(new Event('resize'));
+      expect(textarea.style.height).toBe('144px'); expect(textarea.style.overflowY).toBe('auto');
+      size.width(0); size.content(0); window.dispatchEvent(new Event('resize')); expect(textarea.style.height).toBe('144px');
+      textarea.remove(); size.width(600); bar._autoResize(textarea); expect(textarea.style.height).toBe('144px');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('recalculates recalled, prompted and composing text without leaving stale scroll state', () => {
+    const bar = makeBar(); const textarea = bar.el.querySelector('#message-input'); const size = geometry(textarea, 541);
+    bar.setInputHistory('resize-conversation', [{ role: 'user', content: 'previous\n'.repeat(30) }]);
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' })); expect(textarea.style.overflowY).toBe('auto');
+    size.content(42); textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' })); expect(textarea.style.height).toBe('42px'); expect(textarea.style.overflowY).toBe('hidden');
+    const prompt = store.savePrompt({ name: 'Sizing', content: 'prompt text' }); size.content(95); bar._usePrompt(prompt.id);
+    expect(textarea.style.height).toBe('95px'); expect(textarea.style.overflowY).toBe('hidden');
+    textarea.dispatchEvent(new CompositionEvent('compositionstart')); size.content(541); textarea.dispatchEvent(new Event('input'));
+    const submit = vi.spyOn(bar, '_submit'); textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true })); expect(submit).not.toHaveBeenCalled();
+    textarea.dispatchEvent(new CompositionEvent('compositionend')); size.content(42); textarea.value = ''; textarea.dispatchEvent(new Event('input'));
+    expect(textarea.style.height).toBe('42px'); expect(textarea.style.overflowY).toBe('hidden');
+  });
+});
