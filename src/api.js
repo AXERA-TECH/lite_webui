@@ -38,6 +38,28 @@ export async function fetchModels(baseUrl, apiKey) {
   return Array.isArray(list) ? list.map(m => (typeof m === 'string' ? m : m.id)).filter(Boolean).sort() : [];
 }
 
+export async function checkEndpointHealth(baseUrl, apiKey) {
+  const startedAt = performance.now();
+  try {
+    const models = await fetchModels(baseUrl, apiKey);
+    return {
+      ok: true,
+      baseUrl,
+      latencyMs: Math.round(performance.now() - startedAt),
+      models,
+      error: '',
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      baseUrl,
+      latencyMs: Math.round(performance.now() - startedAt),
+      models: [],
+      error: err?.message || String(err),
+    };
+  }
+}
+
 function extractAudioText(payload) {
   if (typeof payload === 'string') return payload.trim();
   if (typeof payload?.text === 'string') return payload.text.trim();
@@ -130,7 +152,11 @@ export function estimateMessageTokens(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return 0;
 
   return messages.reduce((total, message) => {
-    return total + 4 + estimateContentTokens(message.content);
+    return total + 4 + (
+      typeof message.apiContent === 'string'
+        ? estimateTextTokens(message.apiContent)
+        : estimateContentTokens(message.content)
+    );
   }, 2);
 }
 
@@ -542,6 +568,82 @@ export async function generateSpeech(baseUrl, apiKey, model, input, options = {}
   };
 }
 
+export function parsePcmSampleRate(headers, fallback = 48000) {
+  const explicit = headers?.get?.('x-sample-rate') || headers?.get?.('x-audio-sample-rate');
+  if (explicit && Number.isFinite(Number(explicit))) return Math.round(Number(explicit));
+
+  const contentType = String(headers?.get?.('content-type') || '');
+  const match = /(?:rate|sample[-_]?rate)\s*=\s*(\d+)/i.exec(contentType);
+  if (match && Number.isFinite(Number(match[1]))) return Math.round(Number(match[1]));
+  return fallback;
+}
+
+/**
+ * Opens a raw PCM speech stream. Each yielded value is one binary network
+ * chunk, normally little-endian signed 16-bit mono PCM.
+ */
+export async function* streamSpeech(baseUrl, apiKey, model, input, options = {}) {
+  const {
+    seed = null,
+    signal,
+    onResponse,
+  } = options;
+
+  if (!String(input || '').trim()) throw new Error('Speech text is empty');
+  const seedInt = (seed !== null && seed !== '' && Number.isFinite(Number(seed)))
+    ? Math.floor(Number(seed)) : null;
+  const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
+  const res = await fetch(`${urlBase}/v1/audio/speech`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      input,
+      response_format: 'pcm',
+      stream: true,
+      ...(seedInt !== null ? { seed: seedInt } : {}),
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let errMsg = `Speech generation failed (${res.status})`;
+    try {
+      const json = JSON.parse(text);
+      errMsg = json.error?.message || errMsg;
+    } catch {
+      if (text) errMsg += ': ' + text.slice(0, 300);
+    }
+    throw new Error(errMsg);
+  }
+
+  const contentType = res.headers?.get?.('content-type') || '';
+  const sampleRate = parsePcmSampleRate(res.headers, 48000);
+  onResponse?.({ contentType, sampleRate });
+
+  if (/json/i.test(contentType)) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Speech stream returned JSON instead of PCM: ${text.slice(0, 200)}`);
+  }
+  if (!res.body) {
+    const buffer = await res.arrayBuffer();
+    if (buffer.byteLength) yield buffer;
+    return;
+  }
+
+  const reader = res.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value?.byteLength) yield value;
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+}
+
 /**
  * Heuristic repetition detector for streamed model output.
  * Returns true when the tail of `text` ends with the same chunk repeated
@@ -580,6 +682,12 @@ export function formatMessagesForApi(messages) {
 
   return messages.map((msg, i) => {
     if (msg.role === 'assistant') return { role: 'assistant', content: msg.content };
+
+    // Document messages expose a friendly title in the UI and their full text
+    // only in apiContent. This keeps the wire format standard text-only.
+    if (typeof msg.apiContent === 'string') {
+      return { role: 'user', content: msg.apiContent };
+    }
 
     // For the most recent user message keep content verbatim (includes any media dataUrl).
     if (i === lastUserIdx || !Array.isArray(msg.content)) {

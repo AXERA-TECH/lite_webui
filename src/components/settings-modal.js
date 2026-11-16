@@ -47,6 +47,17 @@ export class SettingsModal {
               </div>
               <div id="endpoints-list" class="space-y-2.5"></div>
             </section>
+            <!-- Device Metrics -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Device Metrics</h3>
+              <div>
+                <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-device-metrics-url">Metrics Aggregator URL</label>
+                <input id="settings-device-metrics-url" type="url" spellcheck="false"
+                  class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors"
+                  placeholder="http://10.126.35.46:8888/api/all" />
+                <p class="mt-1 text-xs text-[var(--c-tx3)]">Optional read-only board status. Leave empty to hide device diagnostics.</p>
+              </div>
+            </section>
             <!-- Context Window -->
             <section class="border-t border-[var(--c-bd)] pt-6">
               <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Context Window</h3>
@@ -82,6 +93,29 @@ export class SettingsModal {
                 </div>
                 <p id="settings-video-token-hint" class="text-xs text-[var(--c-tx3)]">≈1600 tokens total (≈200/frame).</p>
               </div>
+            </section>
+            <!-- Speech Generation -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Speech Generation</h3>
+              <label class="flex items-start gap-2.5 cursor-pointer select-none">
+                <input id="settings-stream-tts" type="checkbox" class="mt-0.5 accent-[var(--c-tx)]" />
+                <span class="text-xs text-[var(--c-tx2)]">
+                  Stream PCM audio when available
+                  <span class="block text-[var(--c-tx3)]">Plays VoxCPM2-style PCM responses while they are generated. Falls back to WAV if the backend rejects streaming.</span>
+                </span>
+              </label>
+            </section>
+            <!-- Document Input -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Document Input</h3>
+              <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-document-max-chars">Maximum extracted characters</label>
+              <input id="settings-document-max-chars" type="number" min="1000" max="200000" step="1000"
+                class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors"
+                placeholder="24000" />
+              <p class="mt-1 text-xs text-[var(--c-tx3)]">
+                TXT / Markdown / CSV / JSON are read directly. PDF, DOCX, and XLSX are parsed in the browser.
+                Larger documents are truncated to protect the model context.
+              </p>
             </section>
             <!-- Generation Parameters -->
             <section class="border-t border-[var(--c-bd)] pt-6">
@@ -242,6 +276,7 @@ export class SettingsModal {
     this.el.querySelector('#settings-context-limit').value = settings.contextLimitTokens || '';
     this.el.querySelector('#settings-context-threshold').value =
       settings.contextResetThresholdPercent || DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
+    this.el.querySelector('#settings-device-metrics-url').value = settings.deviceMetricsUrl || '';
     this.el.querySelector('#settings-temperature').value =
       settings.temperature ?? '';
     this.el.querySelector('#settings-top-p').value =
@@ -251,8 +286,10 @@ export class SettingsModal {
     this.el.querySelector('#settings-system-prompt').value =
       settings.systemPrompt || '';
     this.el.querySelector('#settings-auto-stop').checked = settings.autoStopRepetition !== false;
+    this.el.querySelector('#settings-stream-tts').checked = settings.streamTTS !== false;
     this.el.querySelector('#settings-video-frames').value = settings.videoFrames ?? 8;
     this.el.querySelector('#settings-video-frame-side').value = settings.videoFrameMaxSide ?? 448;
+    this.el.querySelector('#settings-document-max-chars').value = settings.documentMaxChars ?? 24000;
     this._updateVideoTokenHint();
 
     this._renderEndpointCards();
@@ -420,12 +457,17 @@ export class SettingsModal {
     const maxTokens = rawMaxTokens === '' ? null : Math.max(1, Math.round(Number(rawMaxTokens) || 0));
 
     const autoStopRepetition = this.el.querySelector('#settings-auto-stop').checked;
+    const streamTTS = this.el.querySelector('#settings-stream-tts').checked;
+    const deviceMetricsUrl = this.el.querySelector('#settings-device-metrics-url').value.trim();
     const rawVideoFrames = Number(this.el.querySelector('#settings-video-frames').value);
     const videoFrames = Number.isFinite(rawVideoFrames) && rawVideoFrames >= 1
       ? Math.min(32, Math.round(rawVideoFrames)) : 8;
     const rawFrameSide = Number(this.el.querySelector('#settings-video-frame-side').value);
     const videoFrameMaxSide = Number.isFinite(rawFrameSide) && rawFrameSide >= 64
       ? Math.min(1024, Math.round(rawFrameSide)) : 448;
+    const rawDocumentMaxChars = Number(this.el.querySelector('#settings-document-max-chars').value);
+    const documentMaxChars = Number.isFinite(rawDocumentMaxChars) && rawDocumentMaxChars >= 1000
+      ? Math.min(200000, Math.round(rawDocumentMaxChars)) : 24000;
 
     const endpoints = this._readEndpointCards();
     store.saveEndpoints(endpoints);
@@ -437,13 +479,16 @@ export class SettingsModal {
       apiKey: activeEp?.apiKey || '',
       contextLimitTokens,
       contextResetThresholdPercent,
+      deviceMetricsUrl,
       temperature,
       topP,
       maxTokens,
       systemPrompt,
       videoFrames,
       videoFrameMaxSide,
+      documentMaxChars,
       autoStopRepetition,
+      streamTTS,
     });
 
     const btn = this.el.querySelector('#settings-save');

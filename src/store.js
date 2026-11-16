@@ -8,6 +8,7 @@ const KEYS = {
   MODEL_SELECTIONS: 'lw_model_selections',
   ENDPOINTS: 'lw_endpoints',
   ACTIVE_ENDPOINT: 'lw_active_endpoint',
+  PROMPTS: 'lw_prompts',
 };
 
 const DEFAULT_SETTINGS = {
@@ -23,13 +24,45 @@ const DEFAULT_SETTINGS = {
   // Multimodal video: the browser samples N stills and sends them as images
   videoFrames: 8,
   videoFrameMaxSide: 448,
+  documentMaxChars: 24000,
   // Stop streaming automatically when the model falls into a repetition loop
   autoStopRepetition: true,
+  // VoxCPM2-style raw PCM streaming. Non-streaming WAV remains the fallback.
+  streamTTS: true,
+  // Optional read-only AX8860 aggregator, e.g. http://10.126.35.46:8888/api/all
+  deviceMetricsUrl: '',
 };
+
+const DEFAULT_PROMPTS = [
+  {
+    id: 'builtin-code-review',
+    name: 'Code review',
+    content: 'Please review the following code. Focus on correctness, security, performance, maintainability, and edge cases. Give concrete patches or pseudocode for each issue.',
+    builtin: true,
+  },
+  {
+    id: 'builtin-explain',
+    name: 'Explain simply',
+    content: 'Explain the following concept step by step for a developer. Use analogies where useful, then finish with a short summary and three self-check questions.',
+    builtin: true,
+  },
+  {
+    id: 'builtin-refactor',
+    name: 'Refactor plan',
+    content: 'Refactor the following implementation. Preserve behavior, explain the design tradeoffs, and provide the complete refactored version plus tests you would add.',
+    builtin: true,
+  },
+];
 
 export function normalizeBaseUrl(baseUrl) {
   const raw = String(baseUrl || '').trim();
   if (!raw) return DEFAULT_SETTINGS.baseUrl;
+  return raw.replace(/\/+$/, '');
+}
+
+function normalizeDeviceMetricsUrl(value) {
+  const raw = String(value || '').trim();
+  if (!/^https?:\/\//i.test(raw)) return '';
   return raw.replace(/\/+$/, '');
 }
 
@@ -78,13 +111,45 @@ function normalizeSettings(settings = {}) {
     : DEFAULT_SETTINGS.videoFrames;
 
   merged.autoStopRepetition = merged.autoStopRepetition !== false;
+  merged.streamTTS = merged.streamTTS !== false;
+  merged.deviceMetricsUrl = normalizeDeviceMetricsUrl(merged.deviceMetricsUrl);
 
   const videoFrameMaxSide = Number(merged.videoFrameMaxSide);
   merged.videoFrameMaxSide = Number.isFinite(videoFrameMaxSide) && videoFrameMaxSide >= 64
     ? Math.min(1024, Math.round(videoFrameMaxSide))
     : DEFAULT_SETTINGS.videoFrameMaxSide;
 
+  const documentMaxChars = Number(merged.documentMaxChars);
+  merged.documentMaxChars = Number.isFinite(documentMaxChars) && documentMaxChars >= 1000
+    ? Math.min(200000, Math.round(documentMaxChars))
+    : DEFAULT_SETTINGS.documentMaxChars;
+
   return merged;
+}
+
+function normalizePrompt(prompt = {}, index = 0) {
+  const name = typeof prompt.name === 'string' && prompt.name.trim()
+    ? prompt.name.trim().slice(0, 80)
+    : `Prompt ${index + 1}`;
+  const content = typeof prompt.content === 'string' ? prompt.content : '';
+  return {
+    id: typeof prompt.id === 'string' && prompt.id ? prompt.id : uuid(),
+    name,
+    content,
+    builtin: prompt.builtin === true,
+  };
+}
+
+function normalizePrompts(prompts) {
+  if (!Array.isArray(prompts)) return [];
+  const seen = new Set();
+  return prompts
+    .map((prompt, index) => normalizePrompt(prompt, index))
+    .filter((prompt) => {
+      if (!prompt.content.trim() || seen.has(prompt.id)) return false;
+      seen.add(prompt.id);
+      return true;
+    });
 }
 
 function load(key, fallback) {
@@ -231,6 +296,42 @@ export const store = {
     return eps.find(ep => ep.id === id) || eps[0] || null;
   },
 
+  getPrompts() {
+    const saved = load(KEYS.PROMPTS, null);
+    const custom = normalizePrompts(saved);
+    // Built-ins are not persisted, so future releases can update them without
+    // migrating every browser's localStorage.
+    if (custom.length === 0) return [...DEFAULT_PROMPTS];
+    const builtin = DEFAULT_PROMPTS.filter((prompt) => !custom.some((item) => item.id === prompt.id));
+    return [...builtin, ...custom];
+  },
+
+  savePrompt({ id, name, content }) {
+    const prompts = this.getPrompts();
+    const normalized = normalizePrompt({
+      id,
+      name,
+      content,
+      builtin: prompts.find((prompt) => prompt.id === id)?.builtin === true,
+    });
+    if (!normalized.content.trim()) return null;
+
+    const existing = prompts.find((prompt) => prompt.id === normalized.id);
+    const next = existing
+      ? prompts.map((prompt) => (prompt.id === normalized.id ? { ...prompt, ...normalized } : prompt))
+      : [...prompts, normalized];
+    save(KEYS.PROMPTS, next.filter((prompt) => !prompt.builtin));
+    return normalized;
+  },
+
+  deletePrompt(id) {
+    const prompts = this.getPrompts();
+    const target = prompts.find((prompt) => prompt.id === id);
+    if (!target || target.builtin) return false;
+    save(KEYS.PROMPTS, prompts.filter((prompt) => prompt.id !== id));
+    return true;
+  },
+
   createConversation(model) {
     const conv = {
       id: uuid(),
@@ -299,6 +400,62 @@ export const store = {
     convs[idx].messages.pop();
     convs[idx].updatedAt = new Date().toISOString();
     this.saveConversations(convs);
+  },
+
+  replaceMessages(convId, messages) {
+    const convs = this.getConversations();
+    const idx = convs.findIndex(c => c.id === convId);
+    if (idx === -1 || !Array.isArray(messages)) return;
+    convs[idx].messages = messages.filter(message => message && typeof message === 'object');
+    convs[idx].updatedAt = new Date().toISOString();
+    this.saveConversations(convs);
+  },
+
+  saveConversationBranch(convId, label, messages = []) {
+    const convs = this.getConversations();
+    const idx = convs.findIndex(c => c.id === convId);
+    if (idx === -1 || !Array.isArray(messages)) return null;
+
+    const branch = {
+      id: uuid(),
+      label: String(label || 'Conversation branch').slice(0, 100),
+      createdAt: new Date().toISOString(),
+      messages: messages.filter(message => message && typeof message === 'object'),
+    };
+    const existing = Array.isArray(convs[idx].branches) ? convs[idx].branches : [];
+    // Keep the newest branches. Old chat data (including media URLs) can grow
+    // quickly, and localStorage is the only persistent store in LiteWebUI.
+    convs[idx].branches = [...existing, branch].slice(-12);
+    convs[idx].updatedAt = new Date().toISOString();
+    this.saveConversations(convs);
+    return branch;
+  },
+
+  restoreConversationBranch(convId, branchId) {
+    const convs = this.getConversations();
+    const idx = convs.findIndex(c => c.id === convId);
+    if (idx === -1) return null;
+
+    const branches = Array.isArray(convs[idx].branches) ? convs[idx].branches : [];
+    const branch = branches.find(item => item.id === branchId);
+    if (!branch) return null;
+
+    // Snapshot the active path before restoring. Otherwise switching branches
+    // would silently discard any response generated after that branch was saved.
+    if (convs[idx].messages.length > 0) {
+      const snapshot = {
+        id: uuid(),
+        label: `Active path · ${new Date().toLocaleString()}`,
+        createdAt: new Date().toISOString(),
+        messages: convs[idx].messages,
+      };
+      convs[idx].branches = [...branches, snapshot].slice(-12);
+    }
+
+    convs[idx].messages = Array.isArray(branch.messages) ? branch.messages : [];
+    convs[idx].updatedAt = new Date().toISOString();
+    this.saveConversations(convs);
+    return branch;
   },
 
   deleteConversation(convId) {

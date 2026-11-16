@@ -5,14 +5,18 @@ import {
   transcribeAudio,
   generateImage,
   generateSpeech,
+  streamSpeech,
   isRepeatingOutput,
 } from '../api.js';
 import { estimateThreadTokens, resolveContextConfig } from '../context.js';
+import { formatDocumentForModel } from '../documents.js';
+import { PcmStreamPlayer, pcmBytesToWavBlob } from '../audio.js';
 import { Sidebar } from './sidebar.js';
 import { Chat } from './chat.js';
 import { InputBar } from './input-bar.js';
 import { ModelPicker } from './model-picker.js';
 import { SettingsModal } from './settings-modal.js';
+import { HealthPanel } from './health-panel.js';
 import { icon } from '../icons.js';
 
 export class App {
@@ -23,6 +27,7 @@ export class App {
     this.inputBar = new InputBar();
     this.modelPicker = new ModelPicker();
     this.settingsModal = new SettingsModal();
+    this.healthPanel = new HealthPanel();
     this._sidebarOpen = false;
     this._abortController = null;
     // The model that owns the API context represented by the ctx badge. Switching
@@ -123,6 +128,7 @@ export class App {
         <div id="model-picker-mount"></div>
       </div>
       <div class="flex items-center gap-2">
+        <div id="health-panel-mount"></div>
         <button id="theme-toggle-btn" class="p-1.5 rounded-lg text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-top-el)] border border-transparent hover:border-[var(--c-top-bd)] transition-all" aria-label="Toggle theme">
           ${icon('sun')}
         </button>
@@ -134,6 +140,7 @@ export class App {
 
     // Mount model picker
     header.querySelector('#model-picker-mount').appendChild(this.modelPicker.render());
+    header.querySelector('#health-panel-mount').appendChild(this.healthPanel.render());
     main.appendChild(header);
 
     // Chat area
@@ -201,6 +208,7 @@ export class App {
         e.detail.draw,
         e.detail.seed ?? null,
         e.detail.tts || false,
+        e.detail.document || null,
       );
     });
 
@@ -224,6 +232,15 @@ export class App {
 
     // Regenerate the last text response (remove it and re-run the last prompt)
     document.addEventListener('chat:regenerate-text', () => this._regenerateLastText());
+
+    // Edit a historical user message. The active continuation is saved as a branch.
+    document.addEventListener('chat:edit-user', async (e) => {
+      await this._editUserMessage(e.detail?.msgTimestamp, e.detail?.text);
+    });
+
+    document.addEventListener('chat:restore-branch', (e) => {
+      this._restoreConversationBranch(e.detail?.branchId);
+    });
 
     // Model change
     document.addEventListener('model:changed', (e) => {
@@ -333,6 +350,8 @@ export class App {
             content: msg.content,
             model: msg.model,
             timestamp: msg.timestamp || new Date().toISOString(),
+            ...(typeof msg.apiContent === 'string' ? { apiContent: msg.apiContent } : {}),
+            ...(msg.meta ? { meta: msg.meta } : {}),
             ...(msg.generatedImages ? { generatedImages: msg.generatedImages } : {}),
             ...(msg.generatedPrompt ? { generatedPrompt: msg.generatedPrompt } : {}),
             ...(msg.generatedSeed !== undefined ? { generatedSeed: msg.generatedSeed } : {}),
@@ -368,7 +387,7 @@ export class App {
     this._closeMobileSidebar();
   }
 
-  async _handleSend(text, image, video, audio, draw, seed = null, tts = false) {
+  async _handleSend(text, image, video, audio, draw, seed = null, tts = false, documentAttachment = null) {
     const settings = store.getSettings();
     const cfg = this._getApiConfig();
     const trimmedText = text.trim();
@@ -411,6 +430,16 @@ export class App {
         model,
         instruction: trimmedText,
         audio,
+      });
+      return;
+    }
+
+    if (documentAttachment) {
+      await this._handleDocumentTask({
+        convId,
+        model,
+        instruction: trimmedText,
+        document: documentAttachment,
       });
       return;
     }
@@ -569,6 +598,78 @@ export class App {
     }
   }
 
+  _setSessionMessages(convId, messages) {
+    this._sessionMessages.set(convId, [...messages]);
+  }
+
+  async _editUserMessage(timestamp, text) {
+    const convId = store.getCurrentConversationId();
+    if (!convId || typeof text !== 'string' || !text.trim()) return;
+
+    const conv = this._sessionConvFor(store.getCurrentConversation());
+    const messages = conv?.messages || [];
+    const index = messages.findIndex(message => message.timestamp === timestamp && message.role === 'user');
+    if (index === -1 || typeof messages[index].content !== 'string') return;
+
+    const model = this.modelPicker.getModel();
+    if (!model) {
+      this.chat.showError('Error: no model selected');
+      return;
+    }
+
+    const cfg = this._getApiConfig();
+    const settings = store.getSettings();
+    const oldText = messages[index].content;
+
+    // Preserve the original path before replacing the suffix. This makes prompt
+    // experimentation reversible instead of silently deleting generated work.
+    store.saveConversationBranch(
+      convId,
+      `Original: ${oldText.slice(0, 36) || 'empty prompt'}`,
+      messages,
+    );
+
+    const editedMessage = {
+      ...messages[index],
+      content: text.trim(),
+      editedAt: new Date().toISOString(),
+    };
+    const activeMessages = [...messages.slice(0, index), editedMessage];
+    store.replaceMessages(convId, activeMessages);
+    this._setSessionMessages(convId, activeMessages);
+
+    const restoredConv = store.getCurrentConversation();
+    this.chat.loadConversation(this._sessionConvFor(restoredConv));
+    this._updateContextInfo();
+    this.sidebar.update();
+
+    let apiMessages = formatMessagesForApi(activeMessages);
+    if (settings.systemPrompt && settings.systemPrompt.trim()) {
+      apiMessages = [{ role: 'system', content: settings.systemPrompt.trim() }, ...apiMessages];
+    }
+
+    this.inputBar.setSending(true);
+    this.chat.showTypingIndicator();
+    await this._streamAssistantResponse(convId, model, apiMessages, cfg, settings);
+  }
+
+  _restoreConversationBranch(branchId) {
+    const convId = store.getCurrentConversationId();
+    if (!convId || !branchId) return;
+    const branch = store.restoreConversationBranch(convId, branchId);
+    if (!branch) {
+      this.chat.showError('Error: conversation branch not found');
+      return;
+    }
+
+    this._setSessionMessages(convId, branch.messages || []);
+    const conv = store.getCurrentConversation();
+    this.chat.loadConversation(this._sessionConvFor(conv));
+    this._updateContextInfo();
+    this.sidebar.update();
+    this.chat.showSystemMessage('Restored conversation branch');
+  }
+
   async _regenerateLastText() {
     const convId = store.getCurrentConversationId();
     if (!convId) return;
@@ -587,6 +688,9 @@ export class App {
     if (!model) { this.chat.showError('Error: no model selected'); return; }
     const cfg = this._getApiConfig();
     const settings = store.getSettings();
+
+    // Keep the old response recoverable before dropping it from the active path.
+    store.saveConversationBranch(convId, `Before regenerate: ${messages[messages.length - 1].content.slice(0, 32) || 'response'}`, messages);
 
     // Drop the last assistant message from both the store and the session cache.
     store.removeLastMessage(convId);
@@ -643,6 +747,78 @@ export class App {
     return message;
   }
 
+  _buildDocumentUserMessage(instruction, attachment) {
+    const extracted = attachment?.extracted || {};
+    const fileName = extracted.name || attachment.file?.name || 'document';
+    const content = instruction || `Please read ${fileName} and summarize the key points.`;
+    const apiContent = formatDocumentForModel(instruction, extracted);
+
+    return {
+      role: 'user',
+      content,
+      apiContent,
+      timestamp: new Date().toISOString(),
+      meta: {
+        type: 'document',
+        fileName,
+        kind: extracted.kind || '',
+        sizeBytes: extracted.sizeBytes || attachment.file?.size || 0,
+        charCount: extracted.text?.length || 0,
+        truncated: extracted.truncated === true,
+        pages: extracted.pages || null,
+      },
+    };
+  }
+
+  async _handleDocumentTask({ convId, model, instruction, document: attachment }) {
+    if (attachment?.status !== 'ready' || !attachment.extracted?.text) {
+      this.chat.showError('Error: document text is not ready');
+      return;
+    }
+
+    const settings = store.getSettings();
+    const cfg = this._getApiConfig();
+    const contextConfig = resolveContextConfig(settings, model);
+    const userMessage = this._buildDocumentUserMessage(instruction, attachment);
+    const preConv = store.getCurrentConversation();
+    const projectedTokens = estimateThreadTokens(preConv?.messages, userMessage);
+
+    if (preConv?.messages?.length && projectedTokens >= contextConfig.resetTokens) {
+      this._resetConversationContext(
+        convId,
+        `estimated ${projectedTokens.toLocaleString()} tokens reached the ${contextConfig.resetPercent}% auto-reset threshold`,
+      );
+    }
+
+    try {
+      this.chat.clearError();
+      store.addMessage(convId, userMessage);
+      this._pushSessionMsg(convId, userMessage);
+      this.chat.appendUserMessage(userMessage);
+      this._updateContextInfo();
+    } catch (err) {
+      this.chat.showError(`Error: ${err.message}`);
+      this.inputBar.setSending(false);
+      this.inputBar.focus();
+      return;
+    }
+
+    const conv = store.getCurrentConversation();
+    if (conv && conv.messages.length === 1) {
+      store.updateConversationTitle(convId, `Doc: ${userMessage.meta.fileName}`.slice(0, 80));
+      this.sidebar.update();
+    }
+
+    let apiMessages = formatMessagesForApi([...(preConv?.messages || []), userMessage]);
+    if (settings.systemPrompt && settings.systemPrompt.trim()) {
+      apiMessages = [{ role: 'system', content: settings.systemPrompt.trim() }, ...apiMessages];
+    }
+
+    this.inputBar.setSending(true);
+    this.chat.showTypingIndicator();
+    await this._streamAssistantResponse(convId, model, apiMessages, cfg, settings);
+  }
+
   _buildAudioUserMessage(audio, instruction = '') {
     const summary = `Audio upload: ${audio.file?.name || 'audio'}`;
     const suffix = instruction ? `\nInstruction: ${instruction}` : '';
@@ -669,6 +845,7 @@ export class App {
           ]
         : prompt,
       timestamp: ts,
+      meta: { type: 'draw' },
     };
 
     this.chat.clearError();
@@ -787,6 +964,7 @@ export class App {
       role: 'user',
       content: text,
       timestamp,
+      meta: { type: 'tts' },
     };
 
     this.chat.clearError();
@@ -809,16 +987,18 @@ export class App {
     const cfg = this._getApiConfig();
 
     try {
-      const started = performance.now();
       // VoxCPM2's `/v1/models` currently advertises the BaseLM GGUF path, while
       // `/v1/audio/speech` expects the stable `voxcpm2` service model name.
       const requestModel = /voxcpm/i.test(model) ? 'voxcpm2' : model;
-      const result = await generateSpeech(cfg.baseUrl, cfg.apiKey, requestModel, text, {
+      const result = await this._generateSpeechResult({
+        cfg,
+        model: requestModel,
+        text,
         seed,
         signal,
+        settings: store.getSettings(),
       });
       const url = this._createObjectUrl(result.blob);
-      const elapsedMs = Math.round(performance.now() - started);
       const assistantMessage = {
         role: 'assistant',
         content: '语音已生成',
@@ -828,11 +1008,10 @@ export class App {
           ...(url ? { url } : {}),
           contentType: result.contentType,
           sizeBytes: result.blob.size,
+          ...(result.metrics?.streamed ? { streamed: true, sampleRate: result.metrics.sampleRate } : {}),
         },
         ...(result.seed !== null ? { generatedSeed: result.seed } : {}),
-        metrics: {
-          elapsedMs,
-        },
+        metrics: result.metrics,
         timestamp: new Date().toISOString(),
       };
 
@@ -845,6 +1024,7 @@ export class App {
         generatedAudio: {
           contentType: result.contentType,
           sizeBytes: result.blob.size,
+          ...(result.metrics?.streamed ? { streamed: true, sampleRate: result.metrics.sampleRate } : {}),
         },
       };
       store.addMessage(convId, persistentMessage);
@@ -862,6 +1042,74 @@ export class App {
       this.inputBar.setSending(false);
       this.inputBar.focus();
     }
+  }
+
+  async _generateSpeechResult({ cfg, model, text, seed, signal, settings }) {
+    const started = performance.now();
+    const canStream = /voxcpm/i.test(model)
+      && settings.streamTTS !== false
+      && Boolean(window.AudioContext || window.webkitAudioContext);
+
+    if (canStream) {
+      const chunks = [];
+      let player = null;
+      let sampleRate = 48000;
+      let firstAudioMs = null;
+
+      try {
+        for await (const networkChunk of streamSpeech(cfg.baseUrl, cfg.apiKey, model, text, {
+          seed,
+          signal,
+          onResponse: (response) => {
+            sampleRate = response.sampleRate || sampleRate;
+          },
+        })) {
+          const chunk = networkChunk.slice(0, networkChunk.byteLength);
+          if (!player) {
+            player = new PcmStreamPlayer(sampleRate);
+            await player.start();
+          }
+          player.push(chunk);
+          chunks.push(chunk);
+          if (firstAudioMs === null) firstAudioMs = Math.round(performance.now() - started);
+        }
+
+        await player?.finish();
+        if (!chunks.length) throw new Error('Speech stream returned no audio');
+
+        const blob = pcmBytesToWavBlob(chunks, sampleRate);
+        return {
+          blob,
+          contentType: 'audio/wav',
+          seed,
+          metrics: {
+            elapsedMs: Math.round(performance.now() - started),
+            ttftMs: firstAudioMs,
+            firstAudioMs,
+            audioSeconds: Math.round((blob.size - 44) / 2 / sampleRate * 10000) / 10000,
+            sampleRate,
+            streamed: true,
+          },
+        };
+      } catch (err) {
+        await player?.stop().catch(() => {});
+        if (err.name === 'AbortError' || chunks.length) throw err;
+        // Some OpenAI-compatible TTS servers reject response_format=pcm. If no
+        // audio arrived, transparently retry with the WAV-compatible request.
+        console.warn('[tts] PCM streaming unavailable, falling back to WAV:', err.message);
+      }
+    }
+
+    const result = await generateSpeech(cfg.baseUrl, cfg.apiKey, model, text, {
+      seed,
+      signal,
+    });
+    return {
+      ...result,
+      metrics: {
+        elapsedMs: Math.round(performance.now() - started),
+      },
+    };
   }
 
   async _handleAudioTask({ convId, model, instruction, audio }) {

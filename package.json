@@ -20,9 +20,12 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "highlight.js": "^11.9.0",
     "katex": "^0.16.47",
+    "mammoth": "^1.13.0",
     "marked": "^12.0.0",
-    "marked-katex-extension": "^5.1.8"
+    "marked-katex-extension": "^5.1.8",
+    "pdfjs-dist": "^6.5.438"
   }
 }

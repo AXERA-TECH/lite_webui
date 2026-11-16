@@ -15,6 +15,19 @@ beforeEach(() => {
 });
 
 describe('SettingsModal', () => {
+  it('loads and saves the optional device metrics URL', () => {
+    store.saveSettings({ deviceMetricsUrl: 'http://10.126.35.46:8888/api/all' });
+    const modal = mountModal();
+    const input = modal.el.querySelector('#settings-device-metrics-url');
+
+    expect(input.value).toBe('http://10.126.35.46:8888/api/all');
+
+    input.value = 'http://10.126.35.46:8888/api/all/';
+    modal.el.querySelector('#settings-save').click();
+
+    expect(store.getSettings().deviceMetricsUrl).toBe('http://10.126.35.46:8888/api/all');
+  });
+
   it('shows fetched models inline in their endpoint card', () => {
     store.saveEndpoints([{ id: 'ep1', name: 'Local', baseUrl: 'http://a.local', apiKey: '' }]);
     store.saveAvailableModels('http://a.local', ['model-a']);

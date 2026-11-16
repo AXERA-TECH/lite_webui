@@ -39,6 +39,21 @@ function formatTime(iso) {
   }
 }
 
+function formatBranchTime(iso) {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return '';
+  }
+}
+
+function formatBytes(bytes) {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export class Chat {
   constructor() {
     this.el = null;
@@ -49,6 +64,7 @@ export class Chat {
     this._errorEl = null;
     this._lightboxKeyHandler = null;
     this._stick = true; // auto-follow the bottom; user can scroll away to pause
+    this._branches = [];
   }
 
   render() {
@@ -85,6 +101,7 @@ export class Chat {
 
   loadConversation(conversation) {
     this._messages = conversation?.messages || [];
+    this._branches = Array.isArray(conversation?.branches) ? conversation.branches : [];
     this._streamingEl = null;
     this._typingEl = null;
     this._rerender();
@@ -99,6 +116,10 @@ export class Chat {
     if (this._messages.length === 0) {
       container.innerHTML = this._welcomeScreen();
       return;
+    }
+
+    if (this._branches.length > 0) {
+      container.appendChild(this._buildBranchSelector());
     }
 
     const msgs = this._messages;
@@ -166,6 +187,24 @@ export class Chat {
     wrapper.dataset.msgId = msg.timestamp || Math.random();
 
     if (isUser) {
+      const documentMeta = msg.meta?.type === 'document' ? msg.meta : null;
+      const documentHtml = documentMeta ? `
+        <div class="mb-2 flex items-center gap-2 rounded-xl border border-[var(--c-bd)] bg-[var(--c-card)] px-3 py-2 text-left">
+          <div class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-[var(--c-hi)] text-[var(--c-tx3)]">${icon('file')}</div>
+          <div class="min-w-0">
+            <div class="truncate text-[12px] text-[var(--c-tx2)]" title="${escapeHtml(documentMeta.fileName || 'Document')}">${escapeHtml(documentMeta.fileName || 'Document')}</div>
+            <div class="text-[11px] text-[var(--c-tx3)]">
+              ${[
+                documentMeta.kind?.toUpperCase(),
+                formatBytes(documentMeta.sizeBytes),
+                documentMeta.charCount ? `${documentMeta.charCount.toLocaleString()} chars` : '',
+                documentMeta.pages ? `${documentMeta.pages} pages` : '',
+                documentMeta.truncated ? 'truncated' : '',
+              ].filter(Boolean).join(' · ')}
+            </div>
+          </div>
+        </div>
+      ` : '';
       const imageHtml = images.map(img => {
         const src = escapeHtml(img.image_url?.url || '');
         return `<img src="${src}" data-lightbox="1" alt="Attached image" class="max-w-xs max-h-48 rounded-xl border border-[var(--c-bd)] object-cover cursor-pointer mb-2 hover:opacity-90 transition-opacity" title="Click to expand" />`;
@@ -179,6 +218,7 @@ export class Chat {
       wrapper.innerHTML = `
         <div class="flex justify-end">
           <div class="max-w-[65%]">
+            ${documentHtml}
             ${imageHtml}
             ${videoHtml}
             ${text ? `<div class="user-bubble px-4 py-3 msg-text text-[var(--c-utx)] whitespace-pre-wrap break-words">${escapeHtml(text)}</div>` : ''}
@@ -191,6 +231,19 @@ export class Chat {
       wrapper.querySelectorAll('img[data-lightbox]').forEach(imgEl => {
         imgEl.addEventListener('click', () => this._openLightbox(imgEl.src));
       });
+
+      if (this._canEditUserMessage(msg)) {
+        const actionRow = document.createElement('div');
+        actionRow.className = 'mt-1.5 flex justify-end';
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'rounded-lg border border-transparent px-2 py-1 text-[11px] text-[var(--c-tx3)] transition-colors hover:border-[var(--c-bd)] hover:bg-[var(--c-ho)] hover:text-[var(--c-tx2)]';
+        editBtn.innerHTML = `${icon('wand')} Edit & rerun`;
+        editBtn.title = 'Edit this message and rerun from this point';
+        editBtn.addEventListener('click', () => this._startUserEdit(wrapper, msg));
+        actionRow.appendChild(editBtn);
+        wrapper.querySelector('.flex.justify-end')?.appendChild(actionRow);
+      }
     } else {
       const msgDiv = document.createElement('div');
       msgDiv.className = 'w-full';
@@ -361,6 +414,83 @@ export class Chat {
     return wrapper;
   }
 
+  _buildBranchSelector() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mx-auto w-full max-w-4xl px-6 pt-1 pb-3';
+    wrapper.innerHTML = `
+      <label class="flex items-center gap-2 text-[11px] text-[var(--c-tx3)]">
+        <span class="shrink-0">Branch</span>
+        <select class="min-w-0 flex-1 rounded-lg border border-[var(--c-bd)] bg-[var(--c-card)] px-2 py-1 text-[12px] text-[var(--c-tx2)] focus:border-[var(--c-bd-hi)] focus:outline-none" aria-label="Conversation branch">
+          <option value="">Active path</option>
+          ${this._branches.map(branch => `<option value="${escapeHtml(branch.id)}">${escapeHtml(branch.label)} · ${formatBranchTime(branch.createdAt)}</option>`).join('')}
+        </select>
+      </label>
+    `;
+    wrapper.querySelector('select').addEventListener('change', (e) => {
+      const branchId = e.target.value;
+      if (!branchId) return;
+      document.dispatchEvent(new CustomEvent('chat:restore-branch', { detail: { branchId } }));
+    });
+    return wrapper;
+  }
+
+  _startUserEdit(wrapper, msg) {
+    const bubble = wrapper.querySelector('.user-bubble');
+    if (!bubble) return;
+    const originalText = typeof msg.content === 'string' ? msg.content : '';
+    const editor = document.createElement('div');
+    editor.className = 'space-y-2';
+    const textarea = document.createElement('textarea');
+    textarea.value = originalText;
+    textarea.rows = Math.min(12, Math.max(3, originalText.split('\n').length + 1));
+    textarea.className = 'w-full rounded-xl border border-[var(--c-bd)] bg-[var(--c-card)] px-3 py-2 text-[14px] leading-6 text-[var(--c-tx)] focus:border-[var(--c-bd-hi)] focus:outline-none';
+    textarea.setAttribute('aria-label', 'Edit user message');
+
+    const buttonRow = document.createElement('div');
+    buttonRow.className = 'flex justify-end gap-2';
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'rounded-lg border border-[var(--c-bd)] px-3 py-1 text-[12px] text-[var(--c-tx2)] transition-colors hover:bg-[var(--c-ho)]';
+    cancelButton.textContent = 'Cancel';
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'rounded-lg bg-blue-600 px-3 py-1 text-[12px] text-white transition-colors hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-400';
+    saveButton.textContent = 'Save & rerun';
+
+    const close = () => {
+      editor.replaceWith(bubble);
+    };
+    const save = () => {
+      const nextText = textarea.value.trim();
+      if (!nextText || nextText === originalText) {
+        close();
+        return;
+      }
+      document.dispatchEvent(new CustomEvent('chat:edit-user', {
+        detail: { msgTimestamp: msg.timestamp, text: nextText },
+      }));
+    };
+    cancelButton.addEventListener('click', close);
+    saveButton.addEventListener('click', save);
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        save();
+      }
+    });
+
+    buttonRow.appendChild(cancelButton);
+    buttonRow.appendChild(saveButton);
+    editor.appendChild(textarea);
+    editor.appendChild(buttonRow);
+    bubble.replaceWith(editor);
+    textarea.focus();
+    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+  }
+
   _isLastAssistant(msg) {
     if (!msg || msg.role !== 'assistant') return false;
     for (let i = this._messages.length - 1; i >= 0; i--) {
@@ -369,6 +499,18 @@ export class Chat {
       }
     }
     return false;
+  }
+
+  _canEditUserMessage(msg) {
+    if (!msg || msg.role !== 'user' || typeof msg.content !== 'string') return false;
+    if (msg.meta?.type === 'audio' || msg.meta?.type === 'draw' || msg.meta?.type === 'tts') return false;
+
+    // Older conversations created before message metadata did not mark Draw or
+    // Speak prompts. If their immediate response is generated media, treat them
+    // as specialized tasks and keep the original regenerate workflow.
+    const index = this._messages.findIndex(item => item.timestamp === msg.timestamp);
+    const next = index >= 0 ? this._messages[index + 1] : null;
+    return !(next?.generatedImages?.length || next?.generatedAudio);
   }
 
   // Renders an assistant text message into `container`, handling <think> blocks.
@@ -398,13 +540,15 @@ export class Chat {
   // Builds the performance-metrics pill row shown under an assistant message.
   // Fully data-driven: one pill per recognized metric the backend reported, in
   // the fixed order below; nothing renders when none are present. The UI never
-  // computes any value — see extractServerMetrics().
+  // computes chat token metrics — see extractServerMetrics(). Speech latency is
+  // explicitly client-measured and labeled separately.
   _buildMetricsRow(metrics) {
     if (!metrics) return null;
 
     const specs = [
       { field: 'elapsedMs',        icon: 'clock',      label: 'time',     format: formatTtft, title: 'Client-measured request duration' },
       { field: 'ttftMs',          icon: 'zap',        label: 'TTFT',    format: formatTtft, title: 'Time to first token — reported by backend' },
+      { field: 'firstAudioMs',    icon: 'zap',        label: 'first audio', format: formatTtft, title: 'Client-measured time to first playable audio chunk' },
       { field: 'prefillTps',      icon: 'trendingUp', label: 'prefill', format: formatTps,  title: 'Prefill speed — reported by backend' },
       { field: 'decodeTps',       icon: 'gauge',      label: 'decode',  format: formatTps,  title: 'Decode speed — reported by backend' },
       { field: 'inputTokens',     icon: '',           label: 'in',      format: String,     title: 'Input tokens — reported by backend' },
@@ -412,6 +556,7 @@ export class Chat {
         title: 'Tokens newly prefilled this turn (the rest were reused from KV cache)',
         when: (m) => m.inputTokens != null && m.prefillTokens < m.inputTokens },
       { field: 'completionTokens', icon: '',          label: 'out',     format: String,     title: 'Output tokens — reported by backend' },
+      { field: 'audioSeconds',    icon: 'clock',      label: 'audio',   format: String,     title: 'Generated audio duration in seconds' },
     ];
 
     const pills = [];
@@ -707,6 +852,14 @@ export class Chat {
       });
       actionRow.appendChild(downloadBtn);
 
+      if (generatedAudio.streamed) {
+        const streamBadge = document.createElement('span');
+        streamBadge.className = 'inline-flex items-center gap-1 text-[11px] text-emerald-500 border border-emerald-500/30 rounded-lg px-2.5 py-1';
+        streamBadge.textContent = 'streamed PCM';
+        streamBadge.title = 'Audio was played while PCM chunks arrived from the backend';
+        actionRow.appendChild(streamBadge);
+      }
+
       if (msg.generatedSeed != null) {
         const seedBadge = document.createElement('span');
         seedBadge.className = 'inline-flex items-center gap-1 text-[11px] font-mono text-[var(--c-tx3)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1 select-all';
@@ -799,6 +952,7 @@ export class Chat {
   clear() {
     this._closeLightbox();
     this._messages = [];
+    this._branches = [];
     this._streamingEl = null;
     this._streamingText = '';
     this._typingEl = null;
