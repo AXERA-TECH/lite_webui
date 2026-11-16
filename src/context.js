@@ -1,6 +1,6 @@
 import { estimateMessageTokens } from './api.js';
 
-export const DEFAULT_CONTEXT_LIMIT_TOKENS = 4096;
+export const DEFAULT_CONTEXT_LIMIT_TOKENS = 256 * 1024;
 export const DEFAULT_CONTEXT_WARN_PERCENT = 80;
 export const DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT = 85;
 export const DEFAULT_CONTEXT_RESPONSE_RESERVE = 2048;

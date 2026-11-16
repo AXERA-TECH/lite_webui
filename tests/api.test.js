@@ -7,6 +7,8 @@ import {
   streamCompletion,
   transcribeAudio,
   generateSpeech,
+  streamSpeech,
+  generateImage,
   extractServerMetrics,
   formatTtft,
   formatTps,
@@ -498,5 +500,28 @@ describe('streamCompletion – metrics interface', () => {
     expect(chunks).toContain('你好');
     expect(metrics).toEqual({ inputTokens: 10 });
     vi.unstubAllGlobals();
+  });
+});
+
+describe('DeepSeek routing across optional APIs', () => {
+  it('uses the shared provider route for speech, streaming speech and images', async () => {
+    const urls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      urls.push(url);
+      return {
+        ok: true, headers: new Headers({ 'Content-Type': 'audio/pcm;rate=48000' }),
+        blob: async () => new Blob(['audio'], { type: 'audio/wav' }),
+        body: { getReader: () => ({ read: async () => ({ done: true }), releaseLock() {} }) },
+        json: async () => ({ data: [] }),
+      };
+    }));
+    try {
+      await generateSpeech('https://api.deepseek.com', '', 'voice', 'hello');
+      for await (const _ of streamSpeech('https://api.deepseek.com', '', 'voice', 'hello')) {}
+      await generateImage('https://api.deepseek.com', '', 'draw', 'hello');
+      expect(urls).toEqual(['/lw-proxy/audio/speech', '/lw-proxy/audio/speech', '/lw-proxy/images/generations']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

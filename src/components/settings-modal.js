@@ -7,6 +7,12 @@ import {
 } from '../context.js';
 import { icon } from '../icons.js';
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[char]));
+}
+
 function genId() {
   return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
@@ -28,10 +34,10 @@ export class SettingsModal {
 
   _template() {
     return `
-      <div class="modal-backdrop fixed inset-0 z-50 flex items-start justify-center pt-12 px-4 pb-8" style="background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);">
+      <div role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1" class="modal-backdrop fixed inset-0 z-50 flex items-start justify-center pt-12 px-4 pb-8" style="background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);">
         <div class="modal-panel bg-[var(--c-card)] border border-[var(--c-bd)] rounded-xl w-full max-w-lg max-h-[84vh] flex flex-col shadow-2xl">
           <div class="flex items-center justify-between px-5 py-4 border-b border-[var(--c-bd)] flex-shrink-0">
-            <h2 class="text-[var(--c-tx)] font-semibold text-base">Settings</h2>
+            <h2 id="settings-title" class="text-[var(--c-tx)] font-semibold text-base">Settings</h2>
             <button id="settings-close" class="text-[var(--c-tx3)] hover:text-[var(--c-tx)] transition-colors p-1 rounded" aria-label="Close settings">
               ${icon('x')}
             </button>
@@ -176,29 +182,29 @@ export class SettingsModal {
     const borderClass = isActive ? 'border-[var(--c-bd-hi)]' : 'border-[var(--c-bd)]';
 
     return `
-      <div class="endpoint-card border ${borderClass} rounded-xl overflow-hidden" data-endpoint-id="${ep.id}">
+      <div class="endpoint-card border ${borderClass} rounded-xl overflow-hidden" data-endpoint-id="${escapeHtml(ep.id)}">
         <div class="flex items-center gap-2 px-3 py-2.5 bg-[var(--c-sf)]">
           <span class="w-2 h-2 rounded-full flex-shrink-0 transition-colors ${isActive ? 'bg-emerald-400' : 'bg-[var(--c-tx3)] opacity-30'}"></span>
-          <span class="ep-name-display flex-1 text-sm font-medium text-[var(--c-tx)] truncate min-w-0">${ep.name || ep.baseUrl || 'New Endpoint'}</span>
+          <span class="ep-name-display flex-1 text-sm font-medium text-[var(--c-tx)] truncate min-w-0">${escapeHtml(ep.name || ep.baseUrl || 'New Endpoint')}</span>
           ${activeBadge}
           ${removeBtn}
         </div>
         <div class="px-3.5 py-3 space-y-3 border-t border-[var(--c-bd)]">
           <div>
             <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">Name</label>
-            <input class="ep-name w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="My Local Server" value="${ep.name || ''}" />
+            <input class="ep-name w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="My Local Server" value="${escapeHtml(ep.name || '')}" />
           </div>
           <div>
             <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">API Base URL</label>
-            <input class="ep-url w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="url" placeholder="http://127.0.0.1:8000" value="${ep.baseUrl || ''}" />
+            <input class="ep-url w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="url" placeholder="http://127.0.0.1:8000" value="${escapeHtml(ep.baseUrl || '')}" />
           </div>
           <div>
             <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">
               API Key <span class="normal-case font-normal opacity-60 tracking-normal">optional</span>
             </label>
             <div class="relative">
-              <input class="ep-key w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 pr-9 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="password" placeholder="sk-… (leave blank for local servers)" value="${ep.apiKey || ''}" />
-              <button class="ep-key-toggle absolute right-2 top-1/2 -translate-y-1/2 text-[var(--c-tx3)] hover:text-[var(--c-tx)] transition-colors p-0.5 rounded" type="button" tabindex="-1" aria-label="Toggle API key visibility">
+              <input class="ep-key w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 pr-9 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="password" placeholder="sk-… (leave blank for local servers)" value="${escapeHtml(ep.apiKey || '')}" />
+              <button class="ep-key-toggle absolute right-2 top-1/2 -translate-y-1/2 text-[var(--c-tx3)] hover:text-[var(--c-tx)] transition-colors p-0.5 rounded" type="button" aria-label="Toggle API key visibility">
                 ${icon('eye')}
               </button>
             </div>
@@ -209,7 +215,7 @@ export class SettingsModal {
             </button>
             <span class="ep-fetch-status text-xs text-[var(--c-tx3)] flex-shrink-0">${statusText}</span>
           </div>
-          <div class="ep-models${models.length ? '' : ' hidden'}" data-ep-url="${ep.baseUrl || ''}">${modelsHtml}</div>
+          <div class="ep-models${models.length ? '' : ' hidden'}" data-ep-url="${escapeHtml(ep.baseUrl || '')}">${modelsHtml}</div>
         </div>
       </div>
     `;
@@ -221,8 +227,8 @@ export class SettingsModal {
     const rows = [...models].sort().map(modelId => {
       const caps = getCapabilities(modelId, userCaps);
       return `
-        <div class="flex items-center justify-between py-1.5 border-b border-[var(--c-bd)] last:border-0 gap-2" data-model="${modelId}">
-          <span class="text-xs text-[var(--c-tx2)] truncate flex-1" title="${modelId}">${modelId}</span>
+        <div class="flex items-center justify-between py-1.5 border-b border-[var(--c-bd)] last:border-0 gap-2" data-model="${escapeHtml(modelId)}">
+          <span class="text-xs text-[var(--c-tx2)] truncate flex-1" title="${escapeHtml(modelId)}">${escapeHtml(modelId)}</span>
           <div class="flex items-center gap-3 flex-shrink-0">
             <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
               <input type="checkbox" class="cap-check accent-current" data-cap="image" ${caps.image ? 'checked' : ''} /> Vision
@@ -299,10 +305,24 @@ export class SettingsModal {
   }
 
   _renderEndpointCards() {
+    const active = document.activeElement;
+    const oldCard = active?.closest?.('.endpoint-card');
+    const oldCards = Array.from(this.el.querySelectorAll('.endpoint-card'));
+    const oldIndex = oldCards.indexOf(oldCard);
+    const controlClass = oldCard && Array.from(active.classList).find(name => name.startsWith('ep-'));
     const list = this.el.querySelector('#endpoints-list');
     const eps = store.getEndpoints();
     list.innerHTML = eps.map(ep => this._endpointCardHtml(ep)).join('');
     this._bindEndpointCardEvents(list);
+    if (oldCard && this.visible) {
+      const cards = Array.from(list.querySelectorAll('.endpoint-card'));
+      const replacement = cards.find(card => card.dataset.endpointId === oldCard.dataset.endpointId)
+        || cards[Math.min(oldIndex, cards.length - 1)];
+      const target = (controlClass && replacement?.querySelector('.' + controlClass))
+        || replacement?.querySelector('.ep-name')
+        || this.el.querySelector('#add-endpoint-btn');
+      target?.focus();
+    }
   }
 
   _bindEndpointCardEvents(container) {
@@ -380,6 +400,7 @@ export class SettingsModal {
     // Scroll new card into view so the user can immediately start editing it
     const list = this.el.querySelector('#endpoints-list');
     const newCard = list?.lastElementChild;
+    newCard?.querySelector('.ep-name')?.focus();
     if (newCard && typeof newCard.scrollIntoView === 'function') {
       newCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -421,7 +442,7 @@ export class SettingsModal {
     // measured on AX8860: ~200 tokens for a 448px frame
     const perFrame = Math.max(50, Math.round(200 * (side / 448) ** 2));
     const total = frames * perFrame;
-    const ctx = store.getSettings().contextLimitTokens || 4096;
+    const ctx = store.getSettings().contextLimitTokens || DEFAULT_CONTEXT_LIMIT_TOKENS;
     const pct = (total / ctx) * 100;
     const maxFrames = Math.max(1, Math.floor((ctx * 0.8) / perFrame));
 
@@ -502,7 +523,7 @@ export class SettingsModal {
   async _fetchModels(endpointId = null) {
     let ep;
     const card = endpointId
-      ? this.el?.querySelector(`.endpoint-card[data-endpoint-id="${endpointId}"]`)
+      ? Array.from(this.el?.querySelectorAll('.endpoint-card') || []).find(card => card.dataset.endpointId === endpointId)
       : null;
 
     if (card) {
@@ -558,7 +579,7 @@ export class SettingsModal {
       if (card) {
         const epModels = card.querySelector('.ep-models');
         if (epModels) {
-          epModels.innerHTML = `<p class="text-xs text-red-400 pt-2 border-t border-[var(--c-bd)]">Failed to fetch: ${err.message}</p>`;
+          epModels.innerHTML = `<p class="text-xs text-red-400 pt-2 border-t border-[var(--c-bd)]">Failed to fetch: ${escapeHtml(err.message)}</p>`;
           epModels.classList.remove('hidden');
         }
       }
@@ -587,18 +608,98 @@ export class SettingsModal {
     document.dispatchEvent(new CustomEvent('caps:changed'));
   }
 
+  _isFocusable(control, boundary = null) {
+    if (!control?.isConnected || control.disabled || control.matches(':disabled') ||
+        control.tabIndex < 0 || control.getAttribute('type') === 'hidden') return false;
+    for (let node = control; node && node !== boundary; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (node.hidden || node.inert || node.hasAttribute('inert') ||
+          node.getAttribute('aria-hidden') === 'true' ||
+          style.display === 'none' || style.visibility === 'hidden' ||
+          style.visibility === 'collapse') return false;
+      if (node.tagName === 'DETAILS' && !node.open) {
+        const summary = Array.from(node.children).find(child => child.tagName === 'SUMMARY');
+        if (!summary?.contains(control)) return false;
+      }
+    }
+    return true;
+  }
+
+  _focusableControls() {
+    const selector = 'button, input, select, textarea, a[href], summary, [tabindex]';
+    return Array.from(this.el.querySelectorAll(selector))
+      .filter(control => this._isFocusable(control, this.el));
+  }
+
+  _focusFirst() {
+    (this._focusableControls()[0] || this.el).focus();
+  }
+
   show() {
-    if (!this.el) return;
+    if (!this.el || this.visible) return;
+    this._returnFocus = document.activeElement;
     this._loadValues();
     document.body.appendChild(this.el);
     this.visible = true;
+    this._composing = false;
+    this._backgroundInert = Array.from(document.body.children)
+      .filter(node => node !== this.el)
+      .map(node => ({ node, hadAttribute: node.hasAttribute('inert'), value: node.getAttribute('inert'), inert: node.inert }));
+    for (const { node } of this._backgroundInert) {
+      node.inert = true;
+      node.setAttribute('inert', '');
+    }
+    this._onCompositionStart = () => { this._composing = true; };
+    this._onCompositionEnd = () => { this._composing = false; };
+    this._onModalKeydown = event => {
+      if (!this.visible || event.isComposing || event.keyCode === 229 || this._composing) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.hide();
+      } else if (event.key === 'Tab') {
+        const controls = this._focusableControls();
+        const index = controls.indexOf(document.activeElement);
+        // Handle the whole ring explicitly so dynamically hidden controls are skipped.
+        event.preventDefault();
+        const next = index < 0 ? (event.shiftKey ? controls.length - 1 : 0)
+          : (index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+        (controls[next] || this.el).focus();
+      }
+    };
+    this._onModalFocus = event => {
+      if (this.visible && !this.el.contains(event.target)) this._focusFirst();
+    };
+    document.addEventListener('keydown', this._onModalKeydown, true);
+    document.addEventListener('focusin', this._onModalFocus, true);
+    document.addEventListener('compositionstart', this._onCompositionStart, true);
+    document.addEventListener('compositionend', this._onCompositionEnd, true);
+    this._focusFirst();
   }
 
   hide() {
-    if (this.el && this.el.parentNode) {
-      this.el.parentNode.removeChild(this.el);
-    }
+    if (!this.visible) return;
     this.visible = false;
+    document.removeEventListener('keydown', this._onModalKeydown, true);
+    document.removeEventListener('focusin', this._onModalFocus, true);
+    document.removeEventListener('compositionstart', this._onCompositionStart, true);
+    document.removeEventListener('compositionend', this._onCompositionEnd, true);
+    this.el?.remove();
+    for (const { node, hadAttribute, value, inert } of this._backgroundInert || []) {
+      node.inert = inert;
+      if (hadAttribute) node.setAttribute('inert', value);
+      else node.removeAttribute('inert');
+    }
+    this._backgroundInert = [];
+    this._composing = false;
+    const trigger = this._returnFocus;
+    this._returnFocus = null;
+    if (this._isFocusable(trigger)) trigger.focus();
+    if (document.activeElement === document.body || !document.activeElement?.isConnected) {
+      const fallback = Array.from(document.querySelectorAll('button, input, select, textarea, a[href], [tabindex]'))
+        .find(node => this._isFocusable(node));
+      fallback?.focus();
+    }
   }
 
   toggle() {

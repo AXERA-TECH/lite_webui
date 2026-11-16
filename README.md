@@ -95,7 +95,8 @@ http://127.0.0.1:18080/v1
 
 ### 2. Context window
 
-Set **Max Context Tokens** to the real context limit of the selected model.
+**Max Context Tokens** defaults to **256Ki tokens (262,144)**. Adjust it to
+the real context limit of the selected model.
 Lite WebUI uses this value for the `ctx` badge and automatic context resets.
 
 ### 3. Model capabilities
@@ -142,9 +143,21 @@ Keyboard shortcuts:
 ```text
 Enter        send
 Shift+Enter  new line
+Up/Down      recall sent input from the current conversation
 /reset       clear API context but keep visible history
 /clean       clear current conversation and API context
 ```
+
+Settings supports Tab / Shift+Tab navigation and Escape to close. Closing
+restores focus to the control that opened it. Escape is ignored during IME input.
+
+With an empty input, press Up to recall the latest sent instruction. Press Up
+again for older input, or Down for newer input; moving past the latest entry
+restores the empty input. Editing the recalled text exits history browsing.
+
+Model and input-mode switches preserve attachment previews and draft text.
+If an attachment is incompatible, a hint blocks sending until you switch back
+or remove it. Attachment drafts stay in memory and are lost on page reload.
 
 ## Chat and context behavior
 

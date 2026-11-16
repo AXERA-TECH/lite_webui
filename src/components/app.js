@@ -53,7 +53,17 @@ export class App {
   // --- Session message cache helpers ---
 
   _pushSessionMsg(convId, msg) {
-    if (!this._sessionMessages.has(convId)) this._sessionMessages.set(convId, []);
+    if (!this._sessionMessages.has(convId)) {
+      const conv = store.getConversations().find(item => item.id === convId);
+      const messages = [...(conv?.messages || [])];
+      const last = messages.at(-1);
+      // A quota failure may leave storage unchanged. Remove only this exact append.
+      const contentKey = content => Array.isArray(content)
+        ? content.filter(part => part.type === 'text').map(part => part.text || '').join('\n') : content;
+      if (last?.timestamp && last.timestamp === msg.timestamp && last.role === msg.role
+        && contentKey(last.content) === contentKey(msg.content)) messages.pop();
+      this._sessionMessages.set(convId, messages);
+    }
     this._sessionMessages.get(convId).push(msg);
   }
 
@@ -190,6 +200,7 @@ export class App {
         this._selectConversation(currentId);
       } else {
         this.chat.clear();
+        this.inputBar.setInputHistory(null);
         this.sidebar.update();
       }
     });
@@ -634,6 +645,27 @@ export class App {
       content: text.trim(),
       editedAt: new Date().toISOString(),
     };
+    if (editedMessage.meta?.type === 'document' || editedMessage.meta?.type === 'audio') {
+      editedMessage.meta = { ...editedMessage.meta, instruction: text.trim() };
+    }
+    if (editedMessage.meta?.type === 'document' && typeof editedMessage.apiContent === 'string') {
+      // The document formatter appends one exact task suffix. Replace only a
+      // verified suffix; document text may itself contain instruction markers.
+      const previous = messages[index];
+      const oldTasks = [
+        previous.meta?.instruction,
+        previous.content,
+        'Please understand this document and answer questions about it.',
+      ].filter(task => typeof task === 'string' && task.trim()).map(task => task.trim());
+      for (const task of oldTasks) {
+        const suffix = '\nUser instruction: ' + task;
+        if (previous.apiContent.endsWith(suffix)) {
+          editedMessage.apiContent = previous.apiContent.slice(0, -suffix.length)
+            + '\nUser instruction: ' + text.trim();
+          break;
+        }
+      }
+    }
     const activeMessages = [...messages.slice(0, index), editedMessage];
     store.replaceMessages(convId, activeMessages);
     this._setSessionMessages(convId, activeMessages);
@@ -760,6 +792,7 @@ export class App {
       timestamp: new Date().toISOString(),
       meta: {
         type: 'document',
+        instruction,
         fileName,
         kind: extracted.kind || '',
         sizeBytes: extracted.sizeBytes || attachment.file?.size || 0,
@@ -829,6 +862,7 @@ export class App {
       meta: {
         type: 'audio',
         fileName: audio.file?.name || 'audio',
+        instruction,
       },
     };
   }
@@ -1132,6 +1166,7 @@ export class App {
     this._abortController = new AbortController();
     const { signal } = this._abortController;
     const cfg = this._getApiConfig();
+    const settings = store.getSettings();
 
     let fullText = '';
     let metrics = null;
@@ -1167,10 +1202,14 @@ export class App {
       };
 
       const currentConv = store.getCurrentConversation();
-      const apiMessages = [
+      let apiMessages = [
         ...formatMessagesForApi(currentConv.messages),
         { role: 'user', content: followUpMessage.content },
       ];
+
+      if (settings.systemPrompt?.trim()) {
+        apiMessages = [{ role: 'system', content: settings.systemPrompt.trim() }, ...apiMessages];
+      }
 
       this.chat.hideTypingIndicator();
       this.chat.showSystemMessage('Audio transcribed — applying instruction');
@@ -1179,6 +1218,11 @@ export class App {
       for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, {
         signal,
         onMetrics: (m) => { metrics = m; },
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+        topP: settings.topP,
+        idleTimeoutMs: 60000,
+        retries: 2,
       })) {
         fullText += chunk;
         this.chat.appendToAssistantMessage(chunk);
@@ -1259,6 +1303,7 @@ export class App {
 
     const { maxTokens } = resolveContextConfig(store.getSettings(), this.modelPicker.getModel());
     const currentTokens = estimateThreadTokens(conv.messages);
+    if (!this._sessionMessages.has(convId)) this._sessionMessages.set(convId, [...conv.messages]);
     store.clearMessages(convId);
     this.chat.showSystemMessage(
       `Context /reset — cleared ${currentTokens.toLocaleString()} estimated tokens (${reason}; window ${maxTokens.toLocaleString()})`
@@ -1272,6 +1317,7 @@ export class App {
     const { maxTokens, warnTokens } = resolveContextConfig(store.getSettings(), model);
     const currentTokens = estimateThreadTokens(conv?.messages);
     this.inputBar.setContextInfo(currentTokens, maxTokens, warnTokens);
+    this.inputBar.setInputHistory(conv?.id ?? null, this._sessionConvFor(conv)?.messages || []);
   }
 
   _toggleMobileSidebar() {

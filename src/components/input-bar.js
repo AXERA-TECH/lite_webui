@@ -15,7 +15,7 @@ import {
   isDocumentFile,
 } from '../documents.js';
 import { icon } from '../icons.js';
-import { resolveContextConfig } from '../context.js';
+import { DEFAULT_CONTEXT_LIMIT_TOKENS, resolveContextConfig } from '../context.js';
 import { MicrophoneRecorder } from '../audio.js';
 
 const VIDEO_SIZE_LIMIT_MB = 50;
@@ -53,6 +53,13 @@ export class InputBar {
     this._promptOpen = false;
     this._recorder = null;
     this._lastRecordingDuration = 0;
+    this._attachmentReadToken = 0;
+    this._readingAttachment = false;
+    this._composing = false;
+    this._historyScope = null;
+    this._inputHistory = [];
+    this._historyIndex = null;
+    this._recalled = null;
   }
 
   render() {
@@ -175,6 +182,9 @@ export class InputBar {
             </div>
           </div>
 
+          <div id="attachment-status" role="status" aria-live="polite"
+            class="hidden mx-3 mt-2 px-2 py-1 rounded-md border border-[var(--c-bd)] text-[11px] text-[var(--c-tx3)]"></div>
+
           <textarea
             id="message-input"
             class="bg-transparent px-4 pt-3 pb-1 msg-text text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none resize-none w-full"
@@ -182,6 +192,7 @@ export class InputBar {
             rows="1"
             style="max-height: 144px; overflow-y: auto;"
             aria-label="Message input"
+            title="Enter to send · Shift+Enter for new line · ↑ in an empty input browses your message history"
           ></textarea>
 
           <div class="flex items-center justify-between px-2 pb-2 pt-1 gap-2">
@@ -284,10 +295,34 @@ export class InputBar {
     const removeAudioBtn = this.el.querySelector('#remove-audio-btn');
 
     // Auto-resize textarea
-    textarea.addEventListener('input', () => this._autoResize(textarea));
+    textarea.addEventListener('input', () => {
+      this._recalled = null;
+      this._historyIndex = null;
+      this._autoResize(textarea);
+    });
+    textarea.addEventListener('compositionstart', () => { this._composing = true; });
+    textarea.addEventListener('compositionend', () => { this._composing = false; });
 
     // Enter sends; Shift+Enter inserts newline (default behaviour)
     textarea.addEventListener('keydown', (e) => {
+      if (e.isComposing || this._composing || e.keyCode === 229) return;
+      if (!e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && textarea.selectionStart === textarea.selectionEnd) {
+        const browsing = this._historyIndex !== null && this._recalled === textarea.value;
+        if ((e.key === 'ArrowUp' && (textarea.value === '' || browsing) && this._inputHistory.length)
+          || (e.key === 'ArrowDown' && browsing)) {
+          e.preventDefault();
+          if (e.key === 'ArrowUp') {
+            this._historyIndex = browsing ? Math.max(0, this._historyIndex - 1) : this._inputHistory.length - 1;
+          } else {
+            this._historyIndex = this._historyIndex + 1 < this._inputHistory.length ? this._historyIndex + 1 : null;
+          }
+          textarea.value = this._historyIndex === null ? '' : this._inputHistory[this._historyIndex];
+          this._recalled = this._historyIndex === null ? null : textarea.value;
+          textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+          this._autoResize(textarea);
+          return;
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this._submit();
@@ -435,6 +470,8 @@ export class InputBar {
     const after = textarea.value.slice(textarea.selectionEnd ?? textarea.value.length);
     const glueBefore = before && !before.endsWith('\n') ? '\n\n' : '';
     textarea.value = `${before}${glueBefore}${prompt.content}${after ? `\n\n${after}` : ''}`;
+    this._recalled = null;
+    this._historyIndex = null;
     textarea.focus();
     textarea.selectionStart = textarea.selectionEnd = textarea.value.length - (after ? after.length + 2 : 0);
     this._autoResize(textarea);
@@ -454,18 +491,36 @@ export class InputBar {
     this._togglePromptPanel(false);
   }
 
+  _cancelMediaRead() {
+    this._attachmentReadToken++;
+    this._readingAttachment = false;
+  }
+
+  _beginMediaRead() {
+    this._clearImage();
+    this._clearVideo();
+    this._clearAudio();
+    this._clearDocument();
+    const token = ++this._attachmentReadToken;
+    this._readingAttachment = true;
+    this._refreshDraftState();
+    return token;
+  }
+
   async _handleImageFile(file) {
     if (!file.type.startsWith('image/')) return;
-    if (this._pendingAudio) this._clearAudio();
-    if (this._pendingVideo) this._clearVideo();
-    if (this._pendingDocument) this._clearDocument();
-    const dataUrl = await this._fileToDataUrl(file);
-    this._pendingImage = { dataUrl, file };
-    this._showImagePreview(dataUrl);
-    // In draw mode, update placeholder to hint at img2img
-    if (this._drawMode) {
-      const textarea = this.el.querySelector('#message-input');
-      if (textarea) textarea.placeholder = 'Describe how to modify the image\u2026';
+    const token = this._beginMediaRead();
+    try {
+      const dataUrl = await this._fileToDataUrl(file);
+      if (token !== this._attachmentReadToken) return;
+      this._pendingImage = { dataUrl, file };
+      this._showImagePreview(dataUrl);
+      if (this._drawMode) this.el.querySelector('#message-input').placeholder = 'Describe how to modify the image…';
+    } finally {
+      if (token === this._attachmentReadToken) {
+        this._readingAttachment = false;
+        this._refreshDraftState();
+      }
     }
   }
 
@@ -476,9 +531,10 @@ export class InputBar {
       return;
     }
 
+    this._cancelMediaRead();
     if (this._pendingImage) this._clearImage();
     if (this._pendingVideo) this._clearVideo();
-    if (this._pendingAudio) this._clearAudio();
+    if (this._pendingAudio || this._recorder) this._clearAudio();
 
     const token = Symbol('document');
     this._documentToken = token;
@@ -527,6 +583,7 @@ export class InputBar {
       }[level] || 'text-[var(--c-tx3)]';
       statusEl.className = `text-[11px] ${color}`;
     }
+    this._refreshDraftState();
   }
 
   _showDocumentError(file, message) {
@@ -540,12 +597,15 @@ export class InputBar {
       statusEl.textContent = `Extraction failed: ${message}`;
       statusEl.className = 'text-[11px] text-rose-500';
     }
+    this._refreshDraftState();
   }
 
   _clearDocument() {
+    this._cancelMediaRead();
     this._pendingDocument = null;
     this._documentToken = null;
     this.el?.querySelector('#document-preview-area')?.classList.add('hidden');
+    this._refreshDraftState();
   }
 
   async _handleVideoFile(file) {
@@ -555,22 +615,29 @@ export class InputBar {
       alert(`Video file is too large (${sizeMB.toFixed(1)} MB). Please keep it under ${VIDEO_SIZE_LIMIT_MB} MB.`);
       return;
     }
-    if (this._pendingAudio) this._clearAudio();
-    if (this._pendingImage) this._clearImage();
-    if (this._pendingDocument) this._clearDocument();
-    const dataUrl = await this._fileToDataUrl(file);
-    const settings = store.getSettings();
-    const frameCount = settings.videoFrames || DEFAULT_VIDEO_FRAME_COUNT;
-    const maxSide = settings.videoFrameMaxSide || DEFAULT_VIDEO_FRAME_MAX_SIDE;
-    let frames = [];
+    const token = this._beginMediaRead();
     try {
-      frames = await this._extractVideoFrames(dataUrl, frameCount, maxSide);
-    } catch (err) {
-      console.warn('[video] frame extraction failed, falling back to video_url:', err);
+      const dataUrl = await this._fileToDataUrl(file);
+      if (token !== this._attachmentReadToken) return;
+      const settings = store.getSettings();
+      const frameCount = settings.videoFrames || DEFAULT_VIDEO_FRAME_COUNT;
+      const maxSide = settings.videoFrameMaxSide || DEFAULT_VIDEO_FRAME_MAX_SIDE;
+      let frames = [];
+      try {
+        frames = await this._extractVideoFrames(dataUrl, frameCount, maxSide);
+      } catch (err) {
+        console.warn('[video] frame extraction failed, falling back to video_url:', err);
+      }
+      if (token !== this._attachmentReadToken) return;
+      this._pendingVideo = { dataUrl, file, frames };
+      this._showVideoPreview(dataUrl);
+      if (frames.length) this._showVideoFrameHint(frames.length, maxSide);
+    } finally {
+      if (token === this._attachmentReadToken) {
+        this._readingAttachment = false;
+        this._refreshDraftState();
+      }
     }
-    this._pendingVideo = { dataUrl, file, frames };
-    this._showVideoPreview(dataUrl);
-    if (frames.length) this._showVideoFrameHint(frames.length, maxSide);
   }
 
   /**
@@ -626,11 +693,12 @@ export class InputBar {
     let hint = area.querySelector('.video-frame-hint');
     if (!hint) {
       hint = document.createElement('div');
+      hint.className = 'video-frame-hint';
       area.appendChild(hint);
     }
     const perFrame = Math.max(50, Math.round(200 * (side / 448) ** 2));
     const total = n * perFrame;
-    const ctx = store.getSettings().contextLimitTokens || 4096;
+    const ctx = store.getSettings().contextLimitTokens || DEFAULT_CONTEXT_LIMIT_TOKENS;
     const pct = (total / ctx) * 100;
     hint.classList.remove('text-[var(--c-tx3)]', 'text-rose-500', 'text-amber-500');
     hint.classList.add('text-[11px]', 'px-1', 'pb-1');
@@ -654,16 +722,22 @@ export class InputBar {
 
   _handleAudioFile(file) {
     if (!String(file?.type || '').startsWith('audio/') && !/\.(mp3|wav|m4a|aac|ogg|flac|webm)$/i.test(file?.name || '')) return;
-    if (this._pendingImage) this._clearImage();
-    if (this._pendingDocument) this._clearDocument();
+    this._cancelMediaRead();
+    this._clearImage();
+    this._clearVideo();
+    this._clearDocument();
+    this._clearAudio();
     this._pendingAudio = { file };
     this._showAudioPreview();
+    this._refreshDraftState();
   }
 
   async _toggleMicrophone() {
     if (this._recorder?.recording) {
       const duration = this._recorder.duration;
-      const file = await this._recorder.stop();
+      const recorder = this._recorder;
+      const file = await recorder.stop();
+      if (this._recorder !== recorder) return;
       this._lastRecordingDuration = duration;
       this._recorder = null;
       if (file) {
@@ -676,6 +750,10 @@ export class InputBar {
       return;
     }
 
+    this._cancelMediaRead();
+    this._clearImage();
+    this._clearVideo();
+    this._clearDocument();
     if (this._pendingAudio) this._clearAudio();
     this._lastRecordingDuration = 0;
     const recorder = new MicrophoneRecorder({
@@ -686,11 +764,17 @@ export class InputBar {
 
     try {
       this._recorder = recorder;
+      this._refreshDraftState();
       await recorder.start();
+      if (this._recorder !== recorder) {
+        await recorder.stop({ discard: true });
+        return;
+      }
       this._showAudioPreview(0);
       this._updateRecordButton();
       this.focus();
     } catch (err) {
+      if (this._recorder !== recorder) return;
       this._recorder = null;
       this._showRecordingError(err.message);
       this._updateRecordButton();
@@ -714,6 +798,7 @@ export class InputBar {
   }
 
   _clearImage() {
+    this._cancelMediaRead();
     this._pendingImage = null;
     const previewArea = this.el.querySelector('#image-preview-area');
     const thumb = this.el.querySelector('#image-preview-thumb');
@@ -724,6 +809,7 @@ export class InputBar {
       const textarea = this.el.querySelector('#message-input');
       if (textarea) textarea.placeholder = 'Describe what to draw\u2026';
     }
+    this._refreshDraftState();
   }
 
   _showVideoPreview(dataUrl) {
@@ -734,12 +820,14 @@ export class InputBar {
   }
 
   _clearVideo() {
+    this._cancelMediaRead();
     this._pendingVideo = null;
     const previewArea = this.el.querySelector('#video-preview-area');
     previewArea?.querySelector('.video-frame-hint')?.remove();
     const player = this.el.querySelector('#video-preview-player');
     if (player) { player.pause(); player.src = ''; }
     previewArea?.classList.add('hidden');
+    this._refreshDraftState();
   }
 
   _showAudioPreview(duration = null) {
@@ -783,11 +871,9 @@ export class InputBar {
   }
 
   async _clearAudio({ cancelRecording = true } = {}) {
-    if (this._recorder?.recording && cancelRecording) {
-      await this._recorder.stop({ discard: true });
-      this._recorder = null;
-      this._updateRecordButton();
-    }
+    this._cancelMediaRead();
+    const recorder = cancelRecording ? this._recorder : null;
+    if (recorder) this._recorder = null;
     this._pendingAudio = null;
     this._lastRecordingDuration = 0;
     const previewArea = this.el.querySelector('#audio-preview-area');
@@ -799,6 +885,11 @@ export class InputBar {
       labelEl.className = 'text-[11px] text-[var(--c-tx3)]';
     }
     previewArea?.classList.add('hidden');
+    this._refreshDraftState();
+    if (recorder) {
+      await recorder.stop({ discard: true });
+      this._updateRecordButton();
+    }
   }
 
   async _handlePaste(e) {
@@ -807,7 +898,7 @@ export class InputBar {
     for (const item of items) {
       if (item.type.startsWith('image/')) {
         const imageSupported = supportsImage(this._currentModel, store.getModelCapabilities());
-        if (!imageSupported && !this._drawMode) return;
+        if (this._ttsMode || (!imageSupported && !this._drawMode)) return;
         e.preventDefault();
         const file = item.getAsFile();
         if (file) await this._handleImageFile(file);
@@ -815,7 +906,7 @@ export class InputBar {
       }
       if (item.type.startsWith('video/')) {
         const videoSupported = supportsVideo(this._currentModel, store.getModelCapabilities());
-        if (!videoSupported || this._drawMode) return;
+        if (!videoSupported || this._drawMode || this._ttsMode) return;
         e.preventDefault();
         const file = item.getAsFile();
         if (file) await this._handleVideoFile(file);
@@ -823,7 +914,7 @@ export class InputBar {
       }
       if (item.type.startsWith('audio/')) {
         const audioSupported = supportsAudio(this._currentModel, store.getModelCapabilities());
-        if (!audioSupported) return;
+        if (!audioSupported || this._drawMode || this._ttsMode) return;
         e.preventDefault();
         const file = item.getAsFile();
         if (file) this._handleAudioFile(file);
@@ -834,6 +925,8 @@ export class InputBar {
 
   _submit() {
     if (this._sending) return;
+    this._refreshDraftState();
+    if (this._readingAttachment || this._recorder || this._attachmentProblem()) return;
     const textarea = this.el.querySelector('#message-input');
     const text = textarea.value.trim();
     if (!text && !this._pendingImage && !this._pendingVideo && !this._pendingAudio && !this._pendingDocument) return;
@@ -868,6 +961,8 @@ export class InputBar {
     const caps = getCapabilities(this._currentModel, store.getModelCapabilities());
     if (this._drawMode && !caps.imageGen) this._setDrawMode(false);
     textarea.value = '';
+    this._recalled = null;
+    this._historyIndex = null;
     this._autoResize(textarea);
 
     document.dispatchEvent(new CustomEvent('inputbar:send', {
@@ -888,10 +983,7 @@ export class InputBar {
     this._drawMode = active;
     if (active) {
       this._ttsMode = false;
-      // Keep pending image — it can be used as img2img source.
-      if (this._pendingVideo) this._clearVideo();
-      if (this._pendingAudio) this._clearAudio();
-      if (this._pendingDocument) this._clearDocument();
+      if (this._recorder) this._clearAudio();
     }
 
     this._applyModeStyles({
@@ -909,11 +1001,8 @@ export class InputBar {
     this._ttsMode = active;
     if (active) {
       this._drawMode = false;
-      // TTS is text-only in this release.
-      if (this._pendingImage) this._clearImage();
-      if (this._pendingVideo) this._clearVideo();
-      if (this._pendingAudio) this._clearAudio();
-      if (this._pendingDocument) this._clearDocument();
+      // Speak remains text-only; completed attachment drafts stay available.
+      if (this._recorder) this._clearAudio();
     }
 
     this._applyModeStyles({
@@ -1003,6 +1092,7 @@ export class InputBar {
       sendBtn.innerHTML = icon(sending ? 'stop' : 'send');
     }
     if (textarea) textarea.disabled = sending;
+    this._refreshDraftState();
   }
 
   setContextInfo(currentTokens, maxTokens, warnTokens = maxTokens) {
@@ -1051,7 +1141,7 @@ export class InputBar {
     const mediaSupported = imageSupported || videoSupported;
 
     // In draw mode, always allow image attachment (for img2img), even if model lacks vision.
-    const canAttachMedia = this._drawMode ? true : mediaSupported;
+    const canAttachMedia = !this._ttsMode && (this._drawMode ? imageGenSupported : mediaSupported);
     if (canAttachMedia) {
       mediaBtn.disabled = false;
       mediaBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
@@ -1069,19 +1159,17 @@ export class InputBar {
       mediaBtn.disabled = true;
       mediaBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
       mediaBtn.title = 'Vision not enabled for this model';
-      if (this._pendingImage) this._clearImage();
-      if (this._pendingVideo) this._clearVideo();
     }
 
-    if (audioSupported) {
+    if (audioSupported && !this._drawMode && !this._ttsMode) {
       audioBtn.disabled = false;
       audioBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] hover:text-[var(--c-tx2)] hover:bg-[var(--c-hi)]';
       audioBtn.title = 'Attach audio for transcription or translation';
     } else {
       audioBtn.disabled = true;
       audioBtn.className = 'flex items-center justify-center w-8 h-8 rounded-lg transition-all text-[var(--c-tx3)] opacity-40 cursor-not-allowed';
-      audioBtn.title = 'Audio not enabled for this model';
-      if (this._pendingAudio) this._clearAudio();
+      audioBtn.title = this._drawMode || this._ttsMode ? 'Audio input is unavailable in Draw / Speak mode' : 'Audio not enabled for this model';
+      if (this._recorder) this._clearAudio();
     }
 
     if (drawBtn) {
@@ -1145,6 +1233,67 @@ export class InputBar {
       }
       recordBtn.innerHTML = icon(this._recorder?.recording ? 'stop' : 'mic');
     }
+    this._refreshDraftState();
+  }
+
+  _attachmentProblem() {
+    const caps = store.getModelCapabilities();
+    const incompatible = [];
+    if (this._pendingImage && (this._ttsMode || !(this._drawMode
+      ? supportsImageGen(this._currentModel, caps) : supportsImage(this._currentModel, caps)))) incompatible.push('Image');
+    if (this._pendingVideo && (this._drawMode || this._ttsMode || !supportsVideo(this._currentModel, caps))) incompatible.push('Video');
+    if (this._pendingAudio && (this._drawMode || this._ttsMode || !supportsAudio(this._currentModel, caps))) incompatible.push('Audio');
+    if (this._pendingDocument && (this._drawMode || this._ttsMode)) incompatible.push('Document');
+    return incompatible.length
+      ? `${incompatible.join(' / ')} attachment kept. Switch to a compatible model or mode, or remove it to send.` : '';
+  }
+
+  _refreshDraftState() {
+    if (!this.el) return;
+    const problem = this._attachmentProblem();
+    const status = this.el.querySelector('#attachment-status');
+    if (status) {
+      status.textContent = problem;
+      status.classList.toggle('hidden', !problem);
+    }
+    const button = this.el.querySelector('#send-btn');
+    if (!button) return;
+    const documentBlocked = this._pendingDocument && this._pendingDocument.status !== 'ready';
+    const waiting = this._readingAttachment ? 'Reading attachment…' : this._recorder ? 'Stop recording before sending'
+      : documentBlocked ? 'Wait for document extraction or remove the document to send' : '';
+    const blocked = !this._sending && (!!problem || !!waiting);
+    button.disabled = blocked;
+    button.setAttribute('aria-disabled', String(blocked));
+    button.setAttribute('aria-label', this._sending ? 'Stop generation' : blocked ? 'Send unavailable' : 'Send message');
+    button.title = this._sending ? 'Stop generation' : problem || waiting || 'Send (Enter) · Shift+Enter for new line';
+    button.classList.toggle('opacity-40', blocked);
+    button.classList.toggle('cursor-not-allowed', blocked);
+  }
+
+  // Recall user-authored text only; attachments stay untouched.
+  setInputHistory(scope, messages = []) {
+    const textarea = this.el?.querySelector('#message-input');
+    const history = messages.filter(message => message.role === 'user').map(message => {
+      if (['audio', 'document'].includes(message.meta?.type)) return message.meta.instruction || '';
+      return typeof message.content === 'string' ? message.content
+        : Array.isArray(message.content) ? message.content.filter(part => part.type === 'text').map(part => part.text || '').join('\n') : '';
+    }).filter(text => text.trim());
+    const changedScope = scope !== this._historyScope;
+    if (changedScope || history.length === 0) {
+      if (this._recalled !== null && textarea?.value === this._recalled) {
+        textarea.value = '';
+        this._autoResize(textarea);
+      }
+      this._recalled = null;
+      this._historyIndex = null;
+    } else if (this._historyIndex !== null && !this._inputHistory.every((text, index) => history[index] === text)) {
+      // Keep the currently displayed entry selected when new messages arrive.
+      const index = history.lastIndexOf(this._recalled);
+      this._historyIndex = index < 0 ? null : index;
+      if (index < 0) this._recalled = null;
+    }
+    this._historyScope = scope;
+    this._inputHistory = history;
   }
 
   focus() {

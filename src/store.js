@@ -1,3 +1,5 @@
+import { DEFAULT_CONTEXT_LIMIT_TOKENS } from './context.js';
+
 // LocalStorage keys
 const KEYS = {
   SETTINGS: 'lw_settings',
@@ -15,7 +17,7 @@ const DEFAULT_SETTINGS = {
   apiKey: '',
   baseUrl: 'http://127.0.0.1:8000',
   theme: 'light',
-  contextLimitTokens: 4096,
+  contextLimitTokens: DEFAULT_CONTEXT_LIMIT_TOKENS,
   contextResetThresholdPercent: 85,
   temperature: null,
   maxTokens: null,

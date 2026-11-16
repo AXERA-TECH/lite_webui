@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InputBar } from '../src/components/input-bar.js';
 import { store } from '../src/store.js';
+import { MicrophoneRecorder } from '../src/audio.js';
 
 function makeBar() {
   const bar = new InputBar();
@@ -431,4 +432,337 @@ describe('InputBar – multi-endpoint capability isolation', () => {
 
     expect(bar._drawMode).toBe(true);
   });
+});
+
+describe('InputBar – input recall and composition', () => {
+  function key(input, key, options = {}) {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options });
+    input.dispatchEvent(event);
+    return event;
+  }
+  it('recalls only user text without sending or restoring attachments, and Down restores empty draft', () => {
+    const bar = makeBar();
+    const input = bar.el.querySelector('textarea');
+    bar.setInputHistory('a', [{ role: 'user', content: 'old' }, { role: 'user', content: [{ type: 'text', text: 'latest' }, { type: 'image_url', image_url: { url: 'x' } }] }, { role: 'assistant', content: 'answer' }]);
+    const send = vi.spyOn(bar, '_submit');
+    expect(key(input, 'ArrowUp').defaultPrevented).toBe(true);
+    expect(input.value).toBe('latest');
+    expect(send).not.toHaveBeenCalled();
+    expect(bar._pendingImage).toBeNull();
+    expect(key(input, 'ArrowDown').defaultPrevented).toBe(true);
+    expect(input.value).toBe('');
+  });
+  it('leaves empty history, edited drafts, multiline movement, selections and modified arrows native', () => {
+    const bar = makeBar(); const input = bar.el.querySelector('textarea');
+    expect(key(input, 'ArrowUp').defaultPrevented).toBe(false);
+    bar.setInputHistory('a', [{ role: 'user', content: 'previous' }]);
+    for (const option of ['shiftKey', 'altKey', 'ctrlKey', 'metaKey']) expect(key(input, 'ArrowUp', { [option]: true }).defaultPrevented).toBe(false);
+    for (const draft of ['draft', 'line one\nline two', ' ']) { input.value = draft; expect(key(input, 'ArrowUp').defaultPrevented).toBe(false); expect(input.value).toBe(draft); }
+    input.value = ''; key(input, 'ArrowUp'); input.setSelectionRange(0, 3);
+    expect(key(input, 'ArrowDown').defaultPrevented).toBe(false);
+    input.value = 'edited'; input.dispatchEvent(new Event('input'));
+    expect(key(input, 'ArrowDown').defaultPrevented).toBe(false);
+    bar.setInputHistory('a', [{ role: 'user', content: 'one\ntwo' }]); input.value = ''; key(input, 'ArrowUp');
+    expect(key(input, 'ArrowDown').defaultPrevented).toBe(true);
+    expect(input.value).toBe('');
+  });
+  it('isolates scopes and excludes synthetic audio messages', () => {
+    const bar = makeBar(); const input = bar.el.querySelector('textarea');
+    bar.setInputHistory('a', [{ role: 'user', content: 'first' }, { role: 'user', content: 'Audio upload: file', meta: { type: 'audio' } }]);
+    key(input, 'ArrowUp'); expect(input.value).toBe('first');
+    bar.setInputHistory('b', []); expect(input.value).toBe('');
+    expect(key(input, 'ArrowUp').defaultPrevented).toBe(false);
+  });
+  it('does not send or recall during IME composition or legacy keyCode 229', () => {
+    const bar = makeBar(); const input = bar.el.querySelector('textarea'); const send = vi.spyOn(bar, '_submit');
+    bar.setInputHistory('a', [{ role: 'user', content: 'previous' }]);
+    expect(key(input, 'ArrowUp', { isComposing: true }).defaultPrevented).toBe(false);
+    input.value = '候选';
+    key(input, 'Enter', { isComposing: true }); key(input, 'Enter', { keyCode: 229 });
+    input.dispatchEvent(new CompositionEvent('compositionstart')); key(input, 'Enter');
+    expect(send).not.toHaveBeenCalled(); expect(input.value).toBe('候选');
+    input.dispatchEvent(new CompositionEvent('compositionend')); key(input, 'Enter'); expect(send).toHaveBeenCalledOnce();
+  });
+  it('updates the accessible action label for send and stop', () => {
+    const bar = makeBar(); const button = bar.el.querySelector('#send-btn');
+    bar.setSending(true); expect(button.getAttribute('aria-label')).toBe('Stop generation');
+    bar.setSending(false); expect(button.getAttribute('aria-label')).toBe('Send message');
+  });
+});
+
+it('keeps recall tracking through same-conversation context updates and recalls explicit audio instructions', () => {
+  const bar = makeBar(); const input = bar.el.querySelector('textarea');
+  const messages = [{ role: 'user', content: 'Audio upload: voice.wav', meta: { type: 'audio', instruction: 'summarize my recording' } }];
+  bar.setInputHistory('a', messages);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+  expect(input.value).toBe('summarize my recording');
+  bar.setInputHistory('a', messages);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' })); expect(input.value).toBe('');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+  bar.setInputHistory('b', []); expect(input.value).toBe('');
+});
+
+it('browses repeated Up/Down across multiline history and stops at both boundaries', () => {
+  const bar = makeBar(); const input = bar.el.querySelector('textarea');
+  const history = [{ role: 'user', content: 'oldest\nmultiline' }, { role: 'user', content: 'middle' }, { role: 'user', content: 'latest' }];
+  bar.setInputHistory('a', history);
+  const press = key => input.dispatchEvent(new KeyboardEvent('keydown', { key, cancelable: true }));
+  press('ArrowUp'); expect(input.value).toBe('latest');
+  bar.setInputHistory('a', history); press('ArrowUp'); expect(input.value).toBe('middle');
+  bar.setInputHistory('a', [...history, { role: 'user', content: 'middle' }]);
+  bar.setInputHistory('a', history);
+  press('ArrowUp'); expect(input.value).toBe('oldest\nmultiline');
+  press('ArrowUp'); expect(input.value).toBe('oldest\nmultiline');
+  press('ArrowDown'); expect(input.value).toBe('middle');
+  press('ArrowDown'); expect(input.value).toBe('latest');
+  press('ArrowDown'); expect(input.value).toBe('');
+  expect(press('ArrowDown')).toBe(true);
+  press('ArrowUp'); input.value = 'edited'; input.dispatchEvent(new Event('input'));
+  expect(press('ArrowUp')).toBe(true); expect(input.value).toBe('edited');
+});
+
+describe('InputBar – attachment drafts across capabilities', () => {
+  function setup() {
+    store.saveModelCapabilities({
+      'vision-test': { image: true, audio: false, imageGen: false },
+      'audio-test': { image: false, audio: true, imageGen: false },
+      'mixed-test': { image: true, audio: true, imageGen: true },
+      'text-test': { image: false, audio: false, imageGen: false },
+    });
+    const bar = makeBar();
+    vi.spyOn(bar, '_extractVideoFrames').mockResolvedValue(['data:image/jpeg;base64,frame']);
+    vi.spyOn(bar, '_fileToDataUrl').mockImplementation(async file => `data:${file.type};base64,draft`);
+    return bar;
+  }
+  const input = bar => bar.el.querySelector('#message-input');
+  const send = bar => bar.el.querySelector('#send-btn');
+  const status = bar => bar.el.querySelector('#attachment-status');
+  const file = kind => new File(['draft'], `draft.${kind}`, { type: `${kind}/${kind === 'image' ? 'png' : kind === 'video' ? 'mp4' : 'wav'}` });
+  const add = async (bar, kind, attachment) => kind === 'audio' ? bar._handleAudioFile(attachment) : await bar[kind === 'image' ? '_handleImageFile' : '_handleVideoFile'](attachment);
+
+  for (const kind of ['image', 'video', 'audio']) {
+    it(`keeps ${kind}, preview and text across unsupported models, blocks Enter/direct submit, and sends the identical draft after switching back`, async () => {
+      const bar = setup(); const compatible = kind === 'audio' ? 'audio-test' : 'vision-test';
+      bar.setModel(compatible); const attachment = file(kind); await add(bar, kind, attachment);
+      const pendingKey = `_pending${kind[0].toUpperCase()}${kind.slice(1)}`; const original = bar[pendingKey];
+      input(bar).value = 'keep my text'; bar.setModel('text-test');
+      expect(bar[pendingKey]).toBe(original); expect(bar[pendingKey].file).toBe(attachment);
+      expect(input(bar).value).toBe('keep my text');
+      expect(bar.el.querySelector(`#${kind}-preview-area`).classList.contains('hidden')).toBe(false);
+      expect(status(bar).classList.contains('hidden')).toBe(false); expect(status(bar).textContent).toContain('attachment kept');
+      expect(send(bar).disabled).toBe(true); expect(send(bar).getAttribute('aria-disabled')).toBe('true');
+      expect(send(bar).title).toBe(status(bar).textContent);
+      const handler = vi.fn(); document.addEventListener('inputbar:send', handler);
+      try {
+        input(bar).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); bar._submit(); send(bar).click();
+        expect(handler).not.toHaveBeenCalled(); expect(input(bar).value).toBe('keep my text'); expect(bar[pendingKey]).toBe(original);
+        bar.setModel(compatible); expect(send(bar).disabled).toBe(false); expect(status(bar).classList.contains('hidden')).toBe(true);
+        send(bar).click(); expect(handler).toHaveBeenCalledOnce(); expect(handler.mock.calls[0][0].detail[kind]).toBe(original);
+      } finally { document.removeEventListener('inputbar:send', handler); }
+      expect(bar._fileToDataUrl).toHaveBeenCalledTimes(kind === 'audio' ? 0 : 1);
+    });
+
+    it(`keeps Remove available for incompatible ${kind} and restores text sending`, async () => {
+      const bar = setup(); bar.setModel(kind === 'audio' ? 'audio-test' : 'vision-test'); await add(bar, kind, file(kind));
+      input(bar).value = 'text stays'; bar.setModel('text-test');
+      const remove = bar.el.querySelector(`#remove-${kind}-btn`); expect(remove.disabled).toBe(false); remove.click();
+      expect(status(bar).classList.contains('hidden')).toBe(true); expect(send(bar).disabled).toBe(false); expect(input(bar).value).toBe('text stays');
+    });
+  }
+
+  it('preserves video/audio across Draw mode, guards all pending attachments and resumes when Draw is disabled', async () => {
+    for (const kind of ['video', 'audio']) {
+      const bar = setup(); bar.setModel('mixed-test'); bar._setDrawMode(false); await add(bar, kind, file(kind));
+      const original = kind === 'video' ? bar._pendingVideo : bar._pendingAudio;
+      input(bar).value = 'draft'; bar._setDrawMode(true);
+      expect(kind === 'video' ? bar._pendingVideo : bar._pendingAudio).toBe(original);
+      expect(send(bar).disabled).toBe(true); expect(bar.el.querySelector('#audio-upload-btn').disabled).toBe(true);
+      const dispatch = vi.spyOn(document, 'dispatchEvent'); bar._submit(); expect(dispatch).not.toHaveBeenCalled(); dispatch.mockRestore();
+      expect(input(bar).value).toBe('draft'); bar._setDrawMode(false); expect(send(bar).disabled).toBe(false);
+      expect(kind === 'video' ? bar._pendingVideo : bar._pendingAudio).toBe(original);
+      bar.el.remove();
+    }
+  });
+
+  it('uses a retained image in Draw mode and keeps it when returning to Vision', async () => {
+    const bar = setup(); bar.setModel('vision-test'); await add(bar, 'image', file('image')); const original = bar._pendingImage;
+    bar.setModel('mixed-test'); expect(bar._drawMode).toBe(true); expect(send(bar).disabled).toBe(false); expect(bar._pendingImage).toBe(original);
+    bar._setDrawMode(false); expect(send(bar).disabled).toBe(false); expect(bar._pendingImage).toBe(original);
+    bar.setModel('text-test'); expect(send(bar).disabled).toBe(true); expect(bar._pendingImage).toBe(original);
+  });
+
+  it('updates retained drafts on capability and endpoint changes without reading again', async () => {
+    const bar = setup(); store.saveEndpoints([{ id: 'draft-a', name: 'A', baseUrl: 'http://draft-a.local' }, { id: 'draft-b', name: 'B', baseUrl: 'http://draft-b.local' }]);
+    store.saveModelCapabilities('http://draft-a.local', { shared: { image: true } }); store.saveModelCapabilities('http://draft-b.local', { shared: { image: false } });
+    store.setActiveEndpointId('draft-a'); bar.setModel('shared'); await add(bar, 'image', file('image')); const original = bar._pendingImage;
+    store.setActiveEndpointId('draft-b'); bar.setModel('shared'); expect(send(bar).disabled).toBe(true); expect(bar._pendingImage).toBe(original);
+    store.saveModelCapabilities('http://draft-b.local', { shared: { image: true } }); document.dispatchEvent(new CustomEvent('caps:changed'));
+    expect(send(bar).disabled).toBe(false); expect(bar._pendingImage).toBe(original); expect(bar._fileToDataUrl).toHaveBeenCalledOnce();
+  });
+
+  it('keeps Stop enabled with an incompatible draft, then restores the blocked send state', async () => {
+    const bar = setup(); bar.setModel('vision-test'); await add(bar, 'image', file('image')); bar.setSending(true); bar.setModel('text-test');
+    const stop = vi.fn(); document.addEventListener('inputbar:stop', stop);
+    try { expect(send(bar).disabled).toBe(false); expect(send(bar).getAttribute('aria-label')).toBe('Stop generation'); send(bar).click(); expect(stop).toHaveBeenCalledOnce(); }
+    finally { document.removeEventListener('inputbar:stop', stop); }
+    bar.setSending(false); expect(send(bar).disabled).toBe(true); expect(send(bar).title).toContain('attachment kept');
+  });
+
+  it('replaces video with audio and ignores a stale image read after a newer selection', async () => {
+    const bar = setup(); bar.setModel('mixed-test'); bar._setDrawMode(false); await add(bar, 'video', file('video'));
+    const audio = file('audio'); bar._handleAudioFile(audio); expect(bar._pendingVideo).toBeNull(); expect(bar._pendingAudio.file).toBe(audio);
+    let finish; bar._fileToDataUrl.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const reading = bar._handleImageFile(file('image')); expect(send(bar).disabled).toBe(true);
+    bar._handleAudioFile(audio); finish('data:image/png;base64,stale'); await reading;
+    expect(bar._pendingImage).toBeNull(); expect(bar._pendingAudio.file).toBe(audio); expect(send(bar).disabled).toBe(false);
+  });
+
+  it('finishes an in-flight image read after a model switch without dropping it or allowing an incompatible send', async () => {
+    const bar = setup(); bar.setModel('vision-test'); let finish;
+    bar._fileToDataUrl.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const attachment = file('image'); const reading = bar._handleImageFile(attachment); input(bar).value = 'keep'; bar.setModel('text-test');
+    bar._submit(); expect(input(bar).value).toBe('keep'); finish('data:image/png;base64,finished'); await reading;
+    expect(bar._pendingImage.file).toBe(attachment); expect(send(bar).disabled).toBe(true); expect(status(bar).textContent).toContain('Image attachment kept');
+    bar.setModel('vision-test'); expect(send(bar).disabled).toBe(false); expect(bar._pendingImage.dataUrl).toBe('data:image/png;base64,finished');
+  });
+
+  it('leaves the empty-draft UI unchanged and rejects audio paste while in Draw mode', async () => {
+    const bar = setup(); bar.setModel('mixed-test'); expect(status(bar).classList.contains('hidden')).toBe(true); expect(send(bar).disabled).toBe(false);
+    const preventDefault = vi.fn(); await bar._handlePaste({ preventDefault, clipboardData: { items: [{ type: 'audio/wav', getAsFile: () => file('audio') }] } });
+    expect(preventDefault).not.toHaveBeenCalled(); expect(bar._pendingAudio).toBeNull();
+  });
+});
+
+describe('InputBar – upstream feature integration', () => {
+  const textarea = bar => bar.el.querySelector('#message-input');
+  const button = bar => bar.el.querySelector('#send-btn');
+  function allModes(bar) {
+    store.saveModelCapabilities({ 'integration-model': { text: true, image: true, audio: true, imageGen: true, tts: true } });
+    bar.setModel('integration-model'); bar._setTTSMode(false); bar._setDrawMode(false);
+  }
+
+  it('recalls original audio/document instructions without synthetic summaries or extracted text', () => {
+    const bar = makeBar();
+    bar.setInputHistory('a', [
+      { role: 'user', content: 'ordinary text' },
+      { role: 'user', content: 'Document upload: report.md', apiContent: 'secret extraction', meta: { type: 'document', instruction: 'compare the report' } },
+      { role: 'user', content: 'Audio upload: call.wav', meta: { type: 'audio', instruction: 'summarize the call' } },
+      { role: 'user', content: 'Document upload: old.md', meta: { type: 'document' } },
+      { role: 'assistant', content: 'response' },
+    ]);
+    const up = () => textarea(bar).dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    up(); expect(textarea(bar).value).toBe('summarize the call');
+    up(); expect(textarea(bar).value).toBe('compare the report');
+    up(); expect(textarea(bar).value).toBe('ordinary text');
+  });
+
+  it('keeps Prompt Library insertion as an editable draft after recalling history', () => {
+    const bar = makeBar(); bar.setInputHistory('a', [{ role: 'user', content: 'previous' }]);
+    textarea(bar).dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
+    const prompt = store.savePrompt({ name: 'Reusable', content: 'new prompt' }); bar._usePrompt(prompt.id);
+    expect(textarea(bar).value).toContain('new prompt'); expect(bar._historyIndex).toBeNull();
+    const before = textarea(bar).value; textarea(bar).dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' })); expect(textarea(bar).value).toBe(before);
+    bar._togglePromptPanel(true); expect(bar.el.querySelector('#prompt-panel').classList.contains('hidden')).toBe(false);
+  });
+
+  it('preserves a document through Draw and Speak, then sends its original extraction in chat mode', async () => {
+    const bar = makeBar(); allModes(bar);
+    const file = new File(['# original report'], 'report.md', { type: 'text/markdown' });
+    await bar._handleDocumentFile(file); const attachment = bar._pendingDocument; textarea(bar).value = 'compare';
+    for (const mode of ['draw', 'speak']) {
+      if (mode === 'draw') bar._setDrawMode(true); else bar._setTTSMode(true);
+      expect(bar._pendingDocument).toBe(attachment); expect(button(bar).disabled).toBe(true);
+      expect(bar.el.querySelector('#document-preview-area').classList.contains('hidden')).toBe(false);
+      const send = vi.fn(); document.addEventListener('inputbar:send', send);
+      try { bar._submit(); expect(send).not.toHaveBeenCalled(); expect(textarea(bar).value).toBe('compare'); }
+      finally { document.removeEventListener('inputbar:send', send); }
+    }
+    bar._setTTSMode(false); expect(button(bar).disabled).toBe(false);
+    const send = vi.fn(); document.addEventListener('inputbar:send', send);
+    try { bar._submit(); expect(send.mock.calls[0][0].detail.document).toBe(attachment); }
+    finally { document.removeEventListener('inputbar:send', send); }
+  });
+
+  it('continues document extraction after a mode switch, while removal invalidates a pending extraction', async () => {
+    const bar = makeBar(); allModes(bar); let finish;
+    const file = new File(['unused'], 'pending.md', { type: 'text/markdown' });
+    Object.defineProperty(file, 'slice', { value: () => ({ size: file.size, text: () => new Promise(resolve => { finish = resolve; }) }) });
+    const extraction = bar._handleDocumentFile(file); expect(button(bar).disabled).toBe(true);
+    bar._setTTSMode(true); finish('document body'); await extraction;
+    expect(bar._pendingDocument.status).toBe('ready'); expect(button(bar).disabled).toBe(true);
+    bar._setTTSMode(false); expect(button(bar).disabled).toBe(false);
+    const second = bar._handleDocumentFile(file); bar._clearDocument(); finish('too late'); await second;
+    expect(bar._pendingDocument).toBeNull(); expect(button(bar).disabled).toBe(false);
+  });
+
+  it('blocks each completed attachment in Speak mode and restores the same draft afterward', async () => {
+    const bar = makeBar(); allModes(bar);
+    vi.spyOn(bar, '_fileToDataUrl').mockResolvedValue('data:media;base64,original');
+    vi.spyOn(bar, '_extractVideoFrames').mockResolvedValue(['data:image/jpeg;base64,frame']);
+    for (const kind of ['image', 'video', 'audio']) {
+      const file = new File(['data'], `${kind}.bin`, { type: `${kind}/${kind === 'image' ? 'png' : kind === 'video' ? 'mp4' : 'wav'}` });
+      if (kind === 'audio') bar._handleAudioFile(file); else await bar[kind === 'image' ? '_handleImageFile' : '_handleVideoFile'](file);
+      const key = `_pending${kind[0].toUpperCase()}${kind.slice(1)}`; const attachment = bar[key];
+      bar._setTTSMode(true); expect(bar[key]).toBe(attachment); expect(button(bar).disabled).toBe(true);
+      expect(bar.el.querySelector('#media-upload-btn').disabled).toBe(true); expect(bar.el.querySelector('#audio-upload-btn').disabled).toBe(true);
+      bar._submit(); expect(bar[key]).toBe(attachment);
+      bar._setTTSMode(false); expect(button(bar).disabled).toBe(false); expect(bar[key]).toBe(attachment);
+    }
+    expect(bar._pendingVideo).toBeNull(); // selecting audio explicitly replaced the earlier video
+  });
+
+  it('preserves sampled video frames and hints across incompatible models', async () => {
+    const bar = makeBar(); bar.setModel('gpt-4o');
+    vi.spyOn(bar, '_fileToDataUrl').mockResolvedValue('data:video/mp4;base64,video');
+    const frames = ['data:image/jpeg;base64,a', 'data:image/jpeg;base64,b'];
+    vi.spyOn(bar, '_extractVideoFrames').mockResolvedValue(frames);
+    await bar._handleVideoFile(new File(['v'], 'clip.mp4', { type: 'video/mp4' })); const attachment = bar._pendingVideo;
+    bar.setModel('gpt-4'); expect(bar._pendingVideo.frames).toBe(frames); expect(button(bar).disabled).toBe(true);
+    bar.setModel('gpt-4o'); expect(bar._pendingVideo).toBe(attachment); expect(button(bar).disabled).toBe(false);
+    expect(bar.el.querySelector('.video-frame-hint').textContent).toContain('2'); expect(bar._extractVideoFrames).toHaveBeenCalledOnce();
+  });
+
+  it('discards an active recording on incompatible mode changes but preserves a completed recording', async () => {
+    const bar = makeBar(); allModes(bar);
+    const stop = vi.fn(async () => null); bar._recorder = { recording: true, stop, duration: 2 };
+    bar._setTTSMode(true); expect(stop).toHaveBeenCalledWith({ discard: true }); expect(bar._recorder).toBeNull();
+    await Promise.resolve(); bar._setTTSMode(false);
+    const file = new File(['audio'], 'microphone.wav', { type: 'audio/wav' }); bar._pendingAudio = { file, source: 'microphone' }; bar._showAudioPreview();
+    bar._setDrawMode(true); expect(bar._pendingAudio.file).toBe(file); expect(button(bar).disabled).toBe(true);
+    bar._setDrawMode(false); expect(button(bar).disabled).toBe(false); expect(stop).toHaveBeenCalledOnce();
+  });
+});
+
+it('releases a microphone whose permission/start finishes after switching to Speak', async () => {
+  const bar = makeBar();
+  store.saveModelCapabilities({ 'record-and-speak': { text: true, audio: true, tts: true } });
+  bar.setModel('record-and-speak'); bar._setTTSMode(false);
+  let finishStart;
+  const start = vi.spyOn(MicrophoneRecorder.prototype, 'start').mockImplementation(function () {
+    return new Promise(resolve => { finishStart = () => { this.recording = true; resolve(); }; });
+  });
+  const stop = vi.spyOn(MicrophoneRecorder.prototype, 'stop').mockImplementation(async function () { this.recording = false; return null; });
+  try {
+    const recording = bar._toggleMicrophone();
+    expect(bar.el.querySelector('#send-btn').disabled).toBe(true);
+    bar._setTTSMode(true); finishStart(); await recording;
+    expect(bar._recorder).toBeNull(); expect(bar._pendingAudio).toBeNull();
+    expect(stop).toHaveBeenLastCalledWith({ discard: true });
+    expect(bar.el.querySelector('#audio-preview-area').classList.contains('hidden')).toBe(true);
+    expect(bar.el.querySelector('#send-btn').disabled).toBe(false);
+  } finally { start.mockRestore(); stop.mockRestore(); }
+});
+
+it('ignores late video frame extraction after selecting another attachment', async () => {
+  const bar = makeBar();
+  store.saveModelCapabilities({ 'media-and-audio': { text: true, image: true, audio: true } }); bar.setModel('media-and-audio');
+  vi.spyOn(bar, '_fileToDataUrl').mockResolvedValue('data:video/mp4;base64,clip');
+  let finish;
+  vi.spyOn(bar, '_extractVideoFrames').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const video = bar._handleVideoFile(new File(['video'], 'clip.mp4', { type: 'video/mp4' }));
+  await Promise.resolve();
+  const audio = new File(['audio'], 'replacement.wav', { type: 'audio/wav' }); bar._handleAudioFile(audio);
+  finish(['data:image/jpeg;base64,late']); await video;
+  expect(bar._pendingVideo).toBeNull(); expect(bar._pendingAudio.file).toBe(audio);
+  expect(bar.el.querySelector('.video-frame-hint')).toBeNull();
 });

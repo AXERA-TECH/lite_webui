@@ -10,7 +10,8 @@ import {
 describe('context helpers – resolveContextConfig', () => {
   it('falls back to the default context window when nothing is configured', () => {
     const config = resolveContextConfig({}, '');
-    expect(config.maxTokens).toBe(DEFAULT_CONTEXT_LIMIT_TOKENS);
+    expect(DEFAULT_CONTEXT_LIMIT_TOKENS).toBe(262144);
+    expect(config.maxTokens).toBe(262144);
     expect(config.resetPercent).toBe(DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT);
     expect(config.source).toBe('default');
   });
@@ -61,4 +62,8 @@ describe('api helpers – formatCompactTokenCount', () => {
   it('keeps 4k-class windows readable without rounding them up', () => {
     expect(formatCompactTokenCount(4096)).toBe('4.1k');
   });
+});
+
+it.each([null, '', 'invalid', -1, Infinity])('uses 262144 context tokens for invalid runtime config %s', (limit) => {
+  expect(resolveContextConfig({ contextLimitTokens: limit }).maxTokens).toBe(262144);
 });

@@ -14,8 +14,8 @@ describe('store – default settings', () => {
     expect(store.getSettings().theme).toBe('light');
   });
 
-  it('default contextLimitTokens is 4096', () => {
-    expect(store.getSettings().contextLimitTokens).toBe(4096);
+  it('default contextLimitTokens is 262144', () => {
+    expect(store.getSettings().contextLimitTokens).toBe(262144);
   });
 
   it('default contextResetThresholdPercent is 85', () => {
@@ -43,7 +43,7 @@ describe('store – saveSettings', () => {
   it('invalid context settings are normalized back to safe defaults', () => {
     store.saveSettings({ contextLimitTokens: null, contextResetThresholdPercent: 999 });
     const settings = store.getSettings();
-    expect(settings.contextLimitTokens).toBe(4096);
+    expect(settings.contextLimitTokens).toBe(262144);
     expect(settings.contextResetThresholdPercent).toBe(95);
   });
 
@@ -265,5 +265,19 @@ describe('store – endpoints', () => {
   it('saveEndpoints normalizes trailing slashes in baseUrls', () => {
     store.saveEndpoints([{ id: 'ep1', name: 'A', baseUrl: 'http://a.local/', apiKey: '' }]);
     expect(store.getEndpoints()[0].baseUrl).toBe('http://a.local');
+  });
+});
+
+describe('context default compatibility', () => {
+  it.each([4096, 65536])('preserves existing explicit context limit %i', (limit) => {
+    localStorage.setItem('lw_settings', JSON.stringify({ contextLimitTokens: limit }));
+    expect(store.getSettings().contextLimitTokens).toBe(limit);
+    store.saveSettings(store.getSettings());
+    expect(store.getSettings().contextLimitTokens).toBe(limit);
+  });
+
+  it.each([null, '', 'invalid', -1, 512])('falls back to 262144 for invalid context limit %s', (limit) => {
+    localStorage.setItem('lw_settings', JSON.stringify({ contextLimitTokens: limit }));
+    expect(store.getSettings().contextLimitTokens).toBe(262144);
   });
 });

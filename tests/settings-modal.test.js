@@ -1,9 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from '../src/components/settings-modal.js';
 import { store } from '../src/store.js';
 
+const mountedModals = [];
+afterEach(() => {
+  for (const modal of mountedModals.splice(0)) modal.hide();
+});
+
 function mountModal() {
   const modal = new SettingsModal();
+  mountedModals.push(modal);
   modal.render();
   modal.show();
   return modal;
@@ -237,4 +243,161 @@ describe('SettingsModal', () => {
     const statusEl = card.querySelector('.ep-fetch-status');
     expect(statusEl.textContent).toBe('2 models loaded');
   });
+});
+
+describe('default context window settings', () => {
+  it('shows the 256Ki default and restores it when cleared and saved', () => {
+    const modal = mountModal();
+    const input = modal.el.querySelector('#settings-context-limit');
+    expect(input.value).toBe('262144');
+    expect(input.placeholder).toBe('262144');
+    expect(modal.el.querySelector('#settings-context-threshold').value).toBe('85');
+    input.value = '';
+    modal.el.querySelector('#settings-save').click();
+    expect(store.getSettings().contextLimitTokens).toBe(262144);
+    expect(store.getSettings().contextResetThresholdPercent).toBe(85);
+    modal.hide();
+    modal.show();
+    expect(input.value).toBe('262144');
+  });
+
+  it('shows and retains an existing explicit 4096-token setting', () => {
+    store.saveSettings({ contextLimitTokens: 4096 });
+    const modal = mountModal();
+    expect(modal.el.querySelector('#settings-context-limit').value).toBe('4096');
+    modal.el.querySelector('#settings-save').click();
+    expect(store.getSettings().contextLimitTokens).toBe(4096);
+  });
+});
+
+describe('Settings keyboard accessibility', () => {
+  function key(modal, key, extra = {}) {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra });
+    document.activeElement.dispatchEvent(event);
+    return event;
+  }
+
+  it('labels the dialog, focuses it, wraps Tab and restores the trigger and inert state', () => {
+    const trigger = document.createElement('button');
+    const existingInert = document.createElement('section');
+    existingInert.setAttribute('inert', 'original');
+    document.body.append(trigger, existingInert);
+    trigger.focus();
+    const modal = mountModal();
+    expect(modal.el.getAttribute('role')).toBe('dialog');
+    expect(modal.el.getAttribute('aria-modal')).toBe('true');
+    expect(document.getElementById(modal.el.getAttribute('aria-labelledby')).textContent).toBe('Settings');
+    expect(document.activeElement.id).toBe('settings-close');
+    expect(trigger.inert).toBe(true);
+    expect(modal.el.hasAttribute('inert')).toBe(false);
+    key(modal, 'Tab', { shiftKey: true });
+    expect(document.activeElement).toBe(modal._focusableControls().at(-1));
+    key(modal, 'Tab');
+    expect(document.activeElement.id).toBe('settings-close');
+    key(modal, 'Escape');
+    expect(modal.visible).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.hasAttribute('inert')).toBe(false);
+    expect(existingInert.getAttribute('inert')).toBe('original');
+  });
+
+  it('excludes collapsed, hidden, disabled and negative-tabindex controls and adapts dynamically', () => {
+    store.saveAvailableModels('http://127.0.0.1:8000', ['a']);
+    const modal = mountModal();
+    const fixture = document.createElement('details');
+    fixture.innerHTML = '<summary>Advanced</summary><label><select><option>a</option></select></label>';
+    modal.el.querySelector('.modal-panel').append(fixture);
+    const select = fixture.querySelector('select');
+    expect(modal._focusableControls()).not.toContain(select);
+    const summary = fixture.querySelector('summary');
+    expect(modal._focusableControls()).toContain(summary);
+    fixture.open = true;
+    expect(modal._focusableControls()).toContain(select);
+    const fetch = modal.el.querySelector('.ep-fetch-btn');
+    fetch.disabled = true;
+    const keyToggle = modal.el.querySelector('.ep-key-toggle');
+    expect(modal._focusableControls()).toContain(keyToggle);
+    keyToggle.tabIndex = -1;
+    expect(modal._focusableControls()).not.toContain(keyToggle);
+    select.closest('label').hidden = true;
+    expect(modal._focusableControls()).not.toContain(select);
+    expect(modal._focusableControls()).not.toContain(fetch);
+  });
+
+  it('ignores Escape while composing and handles backdrop focus restoration', () => {
+    const trigger = document.createElement('button');
+    document.body.append(trigger);
+    trigger.focus();
+    const modal = mountModal();
+    key(modal, 'Escape', { isComposing: true });
+    expect(modal.visible).toBe(true);
+    key(modal, 'Escape', { keyCode: 229 });
+    expect(modal.visible).toBe(true);
+    document.activeElement.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    key(modal, 'Escape');
+    expect(modal.visible).toBe(true);
+    document.activeElement.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    modal.el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    modal.el.click();
+    expect(modal.visible).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('guards outside focus, preserves focus on endpoint rerenders and focuses new cards', () => {
+    const outside = document.createElement('input');
+    document.body.append(outside);
+    const modal = mountModal();
+    outside.focus();
+    expect(modal.el.contains(document.activeElement)).toBe(true);
+    modal.el.querySelector('.ep-name').focus();
+    modal._renderEndpointCards();
+    expect(document.activeElement.classList.contains('ep-name')).toBe(true);
+    modal.el.querySelector('#add-endpoint-btn').click();
+    expect(document.activeElement).toBe(modal.el.querySelector('.endpoint-card:last-child .ep-name'));
+    modal.el.querySelector('.endpoint-card:last-child .ep-remove-btn').focus();
+    document.activeElement.click();
+    expect(modal.el.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('repeated show/hide keeps one keyboard handler and falls back when trigger is removed', () => {
+    const trigger = document.createElement('button');
+    const fallback = document.createElement('button');
+    document.body.append(trigger, fallback);
+    trigger.focus();
+    const modal = mountModal();
+    modal.show();
+    key(modal, 'Tab');
+    expect(document.activeElement.id).toBe('add-endpoint-btn');
+    modal.hide();
+    fallback.focus();
+    key(modal, 'Tab');
+    expect(document.activeElement).toBe(fallback);
+    trigger.focus();
+    modal.show();
+    trigger.remove();
+    key(modal, 'Escape');
+    expect(document.activeElement).toBe(fallback);
+    modal.show();
+    key(modal, 'Tab');
+    expect(document.activeElement.id).toBe('add-endpoint-btn');
+  });
+});
+
+it('renders endpoint credentials, identifiers, model names and fetch errors as text', async () => {
+  const attack = '"><img src=x onerror=alert(1)>';
+  store.saveEndpoints([{ id: attack, name: attack, baseUrl: 'http://a.local', apiKey: attack }]);
+  store.saveAvailableModels('http://a.local', [attack]);
+  const modal = mountModal();
+  expect(modal.el.querySelector('img')).toBeNull();
+  expect(modal.el.querySelector('.ep-name').value).toBe(attack);
+  expect(modal.el.querySelector('[data-model]').dataset.model).toBe(attack);
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error(attack); }));
+  try {
+    await modal._fetchModels(attack);
+    expect(modal.el.querySelector('img')).toBeNull();
+    expect(modal.el.querySelector('.ep-models').textContent).toContain(attack);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
