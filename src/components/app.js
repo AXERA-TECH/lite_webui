@@ -1237,9 +1237,12 @@ export class App {
       this._updateContextInfo();
       this.sidebar.update();
     } catch (err) {
-      if (err.name === 'AbortError') {
-        // Finalize partial text if any was received
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+        // Preserve a partial follow-up on user stop or stream idle timeout.
         this.chat.finalizeAssistantMessage(fullText, model, metrics);
+        if (err.name === 'TimeoutError') {
+          this.chat.showError('Warning: stream timed out (idle) — showing partial output.');
+        }
         if (fullText) {
           const assistantMsg = {
             role: 'assistant',

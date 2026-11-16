@@ -830,3 +830,53 @@ describe('InputBar – textarea sizing', () => {
     expect(textarea.style.height).toBe('42px'); expect(textarea.style.overflowY).toBe('hidden');
   });
 });
+
+describe('InputBar – media replacement failures', () => {
+  function setup(kind = 'image') {
+    const bar = makeBar(); bar.setModel('gpt-4o');
+    const attachment = { file: new File(['old'], `old.${kind}`, { type: `${kind}/${kind === 'image' ? 'png' : 'mp4'}` }), dataUrl: `data:${kind};base64,old`, ...(kind === 'video' ? { frames: ['old-frame'] } : {}) };
+    bar[kind === 'image' ? '_pendingImage' : '_pendingVideo'] = attachment;
+    bar[kind === 'image' ? '_showImagePreview' : '_showVideoPreview'](attachment.dataUrl);
+    bar.el.querySelector('textarea').value = 'keep this instruction';
+    return { bar, attachment };
+  }
+
+  for (const kind of ['image', 'video']) {
+    it(`preserves the old ${kind} and preview if its replacement cannot be read`, async () => {
+      const { bar, attachment } = setup(kind); let fail;
+      vi.spyOn(bar, '_fileToDataUrl').mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+      const replacement = new File(['new'], `new.${kind}`, { type: `${kind}/${kind === 'image' ? 'png' : 'mp4'}` });
+      const reading = bar[kind === 'image' ? '_handleImageFile' : '_handleVideoFile'](replacement);
+      const key = kind === 'image' ? '_pendingImage' : '_pendingVideo';
+      expect(bar[key]).toBe(attachment); expect(bar.el.querySelector(`#${kind}-preview-area`).classList.contains('hidden')).toBe(false);
+      expect(bar.el.querySelector('#send-btn').disabled).toBe(true);
+      fail(new Error('read failed')); await expect(reading).rejects.toThrow('read failed');
+      expect(bar[key]).toBe(attachment); expect(bar.el.querySelector('textarea').value).toBe('keep this instruction');
+      expect(bar.el.querySelector('#send-btn').disabled).toBe(false);
+    });
+  }
+
+  it('does not revive a draft removed while its replacement was reading', async () => {
+    const { bar } = setup(); let finish;
+    vi.spyOn(bar, '_fileToDataUrl').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const reading = bar._handleImageFile(new File(['new'], 'new.png', { type: 'image/png' }));
+    bar.el.querySelector('#remove-image-btn').click(); finish('data:image/png;base64,new'); await reading;
+    expect(bar._pendingImage).toBeNull(); expect(bar._readingAttachment).toBe(false);
+    expect(bar.el.querySelector('#image-preview-area').classList.contains('hidden')).toBe(true);
+  });
+
+  it('keeps the newest successful selection when an older replacement later fails', async () => {
+    const { bar, attachment } = setup(); let failOld; let finishNew;
+    vi.spyOn(bar, '_fileToDataUrl')
+      .mockImplementationOnce(() => new Promise((_, reject) => { failOld = reject; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishNew = resolve; }));
+    const oldRead = bar._handleImageFile(new File(['first'], 'first.png', { type: 'image/png' }));
+    const oldFailure = expect(oldRead).rejects.toThrow('stale failure');
+    const newest = new File(['second'], 'second.png', { type: 'image/png' });
+    const newRead = bar._handleImageFile(newest); expect(bar._pendingImage).toBe(attachment);
+    finishNew('data:image/png;base64,newest'); await newRead; const committed = bar._pendingImage;
+    failOld(new Error('stale failure')); await oldFailure;
+    expect(bar._pendingImage).toBe(committed); expect(committed.file).toBe(newest); expect(bar._readingAttachment).toBe(false);
+    expect(bar.el.querySelector('#send-btn').disabled).toBe(false);
+  });
+});

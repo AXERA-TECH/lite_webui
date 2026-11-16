@@ -352,6 +352,7 @@ export class SettingsModal {
   }
 
   _updateParameterMode(details, draft) {
+    details.querySelector('.model-parameter-mode').value = draft.enabled ? 'custom' : 'global';
     const custom = details.querySelector('.model-parameter-custom');
     custom.hidden = !draft.enabled;
     custom.classList.toggle('hidden', !draft.enabled);
@@ -364,6 +365,17 @@ export class SettingsModal {
       input.setCustomValidity('');
     }
     const error = details.querySelector('.model-parameter-error'); error.hidden = true; error.classList.add('hidden');
+  }
+
+  _syncParameterViews(source, draft) {
+    // Several endpoint cards may resolve to the same URL/model profile. Keep
+    // every other view current before Save or fetch captures their DOM values.
+    this.el.querySelectorAll('.model-parameters').forEach(details => {
+      if (details !== source && details.dataset.parameterUrl === draft.baseUrl &&
+          details.closest('[data-model]').dataset.model === draft.modelId) {
+        this._updateParameterMode(details, draft);
+      }
+    });
   }
 
   _handleParameterEdit(event) {
@@ -385,6 +397,7 @@ export class SettingsModal {
       this._captureParameterDrafts(details.parentElement);
       draft.dirty = true;
     }
+    this._syncParameterViews(details, draft);
   }
 
   _bindEvents() {
@@ -397,6 +410,7 @@ export class SettingsModal {
       const draft = this._parameterDraft(details.dataset.parameterUrl, details.closest('[data-model]').dataset.model);
       draft.raw = {}; draft.invalid.clear(); draft.initialized = true; draft.enabled = true; draft.dirty = true;
       this._updateParameterMode(details, draft);
+      this._syncParameterViews(details, draft);
     });
     this.el.querySelector('#settings-close').addEventListener('click', () => this.hide());
     this.el.addEventListener('mousedown', (e) => {

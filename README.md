@@ -122,7 +122,18 @@ Max Output Tokens
 Auto-stop on repetition
 ```
 
-Empty sampling fields are omitted, allowing the backend default to apply.
+The values under **Default Generation Parameters** apply globally. Expand
+**Parameters** under an endpoint's model and choose **Custom parameters** for
+an independent configuration keyed by endpoint URL and model. The first switch
+to Custom copies the current global sampling values. Empty Custom fields are
+omitted and use the backend default; they do not inherit global values.
+Switching back to **Use global defaults** retains the saved Custom values.
+
+Custom parameters also include Seed, advanced sampling controls, Stop sequences,
+and **Enable Thinking** (server default / enabled / disabled). Thinking control
+requires backend support for `chat_template_kwargs.enable_thinking`; it controls
+generation rather than how existing responses are displayed. System Prompt and
+Auto-stop on repetition remain global.
 
 ## Everyday interface guide
 

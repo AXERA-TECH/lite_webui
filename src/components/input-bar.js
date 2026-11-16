@@ -522,10 +522,8 @@ export class InputBar {
   }
 
   _beginMediaRead() {
-    this._clearImage();
-    this._clearVideo();
-    this._clearAudio();
-    this._clearDocument();
+    // Keep the last usable draft until its replacement has finished reading.
+    if (this._recorder) this._clearAudio();
     const token = ++this._attachmentReadToken;
     this._readingAttachment = true;
     this._refreshDraftState();
@@ -538,9 +536,14 @@ export class InputBar {
     try {
       const dataUrl = await this._fileToDataUrl(file);
       if (token !== this._attachmentReadToken) return;
+      this._clearImage();
+      this._clearVideo();
+      this._clearAudio();
+      this._clearDocument();
       this._pendingImage = { dataUrl, file };
       this._showImagePreview(dataUrl);
       if (this._drawMode) this.el.querySelector('#message-input').placeholder = 'Describe how to modify the image…';
+      this._refreshDraftState();
     } finally {
       if (token === this._attachmentReadToken) {
         this._readingAttachment = false;
@@ -654,9 +657,14 @@ export class InputBar {
         console.warn('[video] frame extraction failed, falling back to video_url:', err);
       }
       if (token !== this._attachmentReadToken) return;
+      this._clearImage();
+      this._clearVideo();
+      this._clearAudio();
+      this._clearDocument();
       this._pendingVideo = { dataUrl, file, frames };
       this._showVideoPreview(dataUrl);
       if (frames.length) this._showVideoFrameHint(frames.length, maxSide);
+      this._refreshDraftState();
     } finally {
       if (token === this._attachmentReadToken) {
         this._readingAttachment = false;

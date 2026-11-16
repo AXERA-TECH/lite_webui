@@ -216,6 +216,8 @@ function findImplicitThinkEnd(text) {
   if (!text.includes('</think>')) return -1;
   let fence = null;
   let fenceQuoteDepth = 0;
+  let indentedCode = false;
+  let canStartIndentedCode = true;
   for (let index = 0; index < text.length;) {
     if (index === 0 || text[index - 1] === '\n') {
       const end = text.indexOf('\n', index);
@@ -232,6 +234,7 @@ function findImplicitThinkEnd(text) {
       if (fence) {
         const closing = fenceLine.match(/^ {0,3}(`+|~+)[ \t]*$/);
         if (closing && closing[1][0] === fence[0] && closing[1].length >= fence.length) fence = null;
+        canStartIndentedCode = true;
         index = lineEnd + 1;
         continue;
       }
@@ -240,9 +243,24 @@ function findImplicitThinkEnd(text) {
       if (opening && (opening[1][0] !== '`' || !opening[2].includes('`'))) {
         fence = opening[1];
         fenceQuoteDepth = (quotePrefix.match(/>/g) || []).length;
+        indentedCode = false;
+        canStartIndentedCode = true;
         index = lineEnd + 1;
         continue;
       }
+      // Unlike fenced code, indentation cannot interrupt an ordinary paragraph.
+      if (!line.trim()) {
+        canStartIndentedCode = true;
+        index = lineEnd + 1;
+        continue;
+      }
+      if (/^(?: {4}| {0,3}\t)/.test(line) && (canStartIndentedCode || indentedCode)) {
+        indentedCode = true;
+        index = lineEnd + 1;
+        continue;
+      }
+      indentedCode = false;
+      canStartIndentedCode = false;
     }
     if (text[index] === '\\') { index += 2; continue; }
     if (text[index] === '`') {

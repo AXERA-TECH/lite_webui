@@ -738,3 +738,35 @@ data: [DONE]
     expect(upload.has('chat_template_kwargs')).toBe(false);
   });
 });
+
+it('finalizes and saves partial audio follow-up text when its chat stream times out', async () => {
+  store.saveSettings({ baseUrl: 'http://a.local' });
+  store.saveAvailableModels('http://a.local', ['audio-model']);
+  store.setCurrentModel('http://a.local', 'audio-model');
+  const conv = store.createConversation('audio-model');
+  store.setCurrentConversationId(conv.id);
+  globalThis.fetch = vi.fn(async (url) => {
+    if (String(url).includes('/audio/transcriptions')) {
+      return { ok: true, json: async () => ({ text: 'Audio transcript' }) };
+    }
+    let first = true;
+    return { ok: true, body: { getReader: () => ({ read: async () => {
+      if (!first) throw new DOMException('Stream idle timeout', 'TimeoutError');
+      first = false;
+      return { done: false, value: new TextEncoder().encode(`data: {"choices":[{"delta":{"content":"Partial follow-up"}}]}
+
+`) };
+    } }) } };
+  });
+  const { app } = mountApp();
+  const finalize = vi.spyOn(app.chat, 'finalizeAssistantMessage');
+  await app._handleAudioTask({ convId: conv.id, model: 'audio-model', instruction: 'Summarize', audio: {
+    file: new File(['audio'], 'meeting.wav', { type: 'audio/wav' }),
+  } });
+  expect(finalize).toHaveBeenCalledWith('Partial follow-up', 'audio-model', null);
+  expect(store.getCurrentConversation().messages.at(-1)).toMatchObject({ role: 'assistant', content: 'Partial follow-up' });
+  expect(app._sessionMessages.get(conv.id).at(-1).content).toBe('Partial follow-up');
+  expect(app.chat._streamingEl).toBeNull();
+  expect(app.chat.el.textContent).toContain('stream timed out');
+  expect(app.inputBar._sending).toBe(false);
+});

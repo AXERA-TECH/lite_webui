@@ -38,8 +38,17 @@ describe('think boundaries', () => {
     '```xml\n> ```\n</think>\n```',
     String.raw`Example \</think> stays in the answer.`,
     'Example &lt;/think&gt; stays in the answer.',
+    'Example:\n\n    </think>\n\nNormal answer',
+    'Example:\n\n\t</think>\n\nNormal answer',
+    '    </think>\nNormal answer',
   ])('does not classify a literal Markdown example as thinking: %j', text => {
     expect(parseThinkStream(text)).toEqual({ thinkText: '', mainText: text, inThink: false, thinkComplete: false });
+  });
+
+  it('keeps indented protocol closings inside a continuing paragraph recognizable', () => {
+    expect(parseThinkStream('thinking text\n    </think>answer')).toMatchObject({ thinkText: 'thinking text', mainText: 'answer' });
+    expect(parseThinkStream('thinking text\n\t</think>answer')).toMatchObject({ thinkText: 'thinking text', mainText: 'answer' });
+    expect(parseThinkStream('reason\n\n    </think>\n\n</think>answer')).toMatchObject({ thinkText: 'reason\n\n    </think>', mainText: 'answer' });
   });
 
   it('skips literal closings before the genuine boundary and ignores later literal openings', () => {

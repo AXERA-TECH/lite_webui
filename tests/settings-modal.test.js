@@ -519,3 +519,49 @@ describe('SettingsModal – model generation parameter drafts', () => {
     expect(modal.el.querySelector('#settings-max-tokens').placeholder).toBe('server default'); expect(modal.el.textContent).not.toContain('Empty = no limit');
   });
 });
+
+describe('shared generation parameter views', () => {
+  const change = (node, value) => { node.value = value; node.dispatchEvent(new Event('change', { bubbles: true })); };
+  function setupShared() {
+    store.saveEndpoints([
+      { id: 'first', name: 'First', baseUrl: 'http://same.local', apiKey: '' },
+      { id: 'second', name: 'Second', baseUrl: 'http://same.local/', apiKey: 'other-key' },
+    ]);
+    store.saveAvailableModels('http://same.local', ['model']);
+    const modal = mountModal();
+    return { modal, panels: () => Array.from(modal.el.querySelectorAll('.model-parameters')) };
+  }
+
+  it('saves the latest edits from either card sharing a normalized endpoint and model', () => {
+    const { modal, panels } = setupShared();
+    const [first, second] = panels();
+    change(first.querySelector('.model-parameter-mode'), 'custom');
+    change(first.querySelector('[data-parameter="temperature"]'), '0.3');
+    change(second.querySelector('[data-parameter="enableThinking"]'), 'false');
+    change(second.querySelector('[data-parameter="seed"]'), '0');
+    modal.el.querySelector('#settings-save').click();
+    expect(store.getGenerationParameters('http://same.local', 'model')).toEqual({ temperature: 0.3, seed: 0, enableThinking: false });
+    change(second.querySelector('.model-parameter-mode'), 'global');
+    modal.el.querySelector('#settings-save').click();
+    expect(store.getModelGenerationConfig('http://same.local', 'model')).toMatchObject({ enabled: false, parameters: { temperature: 0.3, seed: 0, enableThinking: false } });
+    change(first.querySelector('.model-parameter-mode'), 'custom');
+    first.querySelector('.model-parameter-reset').click();
+    modal.el.querySelector('#settings-save').click();
+    expect(store.getGenerationParameters('http://same.local', 'model')).toEqual({});
+  });
+
+  it('retains shared edits through fetch and discards unsaved edits on closing', async () => {
+    const { modal, panels } = setupShared();
+    const second = panels()[1];
+    change(second.querySelector('.model-parameter-mode'), 'custom');
+    change(second.querySelector('[data-parameter="seed"]'), '55');
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ id: 'model' }] }) }));
+    await modal._fetchModels('first');
+    modal.el.querySelector('#settings-save').click();
+    expect(store.getGenerationParameters('http://same.local', 'model')).toEqual({ seed: 55 });
+    change(panels()[0].querySelector('[data-parameter="seed"]'), '99');
+    modal.hide(); modal.show();
+    expect(modal.el.querySelector('[data-parameter="seed"]').value).toBe('55');
+    expect(store.getGenerationParameters('http://same.local', 'model')).toEqual({ seed: 55 });
+  });
+});
