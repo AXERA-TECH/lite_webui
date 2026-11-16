@@ -210,6 +210,56 @@ export function renderMarkdown(text) {
   }
 }
 
+// Some servers prefill <think> in the prompt and return only its closing tag.
+// Only this compatibility path needs to distinguish protocol from Markdown examples.
+function findImplicitThinkEnd(text) {
+  if (!text.includes('</think>')) return -1;
+  let fence = null;
+  let fenceQuoteDepth = 0;
+  for (let index = 0; index < text.length;) {
+    if (index === 0 || text[index - 1] === '\n') {
+      const end = text.indexOf('\n', index);
+      const lineEnd = end === -1 ? text.length : end;
+      const line = text.slice(index, lineEnd).replace(/\r$/, '');
+      let fenceLine = line;
+      if (fence) {
+        for (let depth = 0; depth < fenceQuoteDepth; depth++) {
+          const quote = fenceLine.match(/^ {0,3}>[ \t]?/);
+          if (!quote) { fence = null; break; }
+          fenceLine = fenceLine.slice(quote[0].length);
+        }
+      }
+      if (fence) {
+        const closing = fenceLine.match(/^ {0,3}(`+|~+)[ \t]*$/);
+        if (closing && closing[1][0] === fence[0] && closing[1].length >= fence.length) fence = null;
+        index = lineEnd + 1;
+        continue;
+      }
+      const quotePrefix = line.match(/^(?: {0,3}>[ \t]?)+/)?.[0] || '';
+      const opening = line.slice(quotePrefix.length).match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (opening && (opening[1][0] !== '`' || !opening[2].includes('`'))) {
+        fence = opening[1];
+        fenceQuoteDepth = (quotePrefix.match(/>/g) || []).length;
+        index = lineEnd + 1;
+        continue;
+      }
+    }
+    if (text[index] === '\\') { index += 2; continue; }
+    if (text[index] === '`') {
+      const ticks = text.slice(index).match(/^`+/)[0];
+      const runs = /`+/g;
+      runs.lastIndex = index + ticks.length;
+      let closing;
+      while ((closing = runs.exec(text)) && closing[0].length !== ticks.length) { /* exact matching code-span delimiter */ }
+      index = closing ? runs.lastIndex : index + ticks.length;
+      continue;
+    }
+    if (text.startsWith('</think>', index)) return index;
+    index++;
+  }
+  return -1;
+}
+
 /**
  * Splits text into think block content and main content.
  * Handles the streaming case where </think> may not have arrived yet.
@@ -217,6 +267,11 @@ export function renderMarkdown(text) {
 export function parseThinkStream(text) {
   if (!text) return { thinkText: '', mainText: '', inThink: false, thinkComplete: false };
   const openIdx = text.indexOf('<think>');
+  const implicitEnd = findImplicitThinkEnd(text);
+  if (implicitEnd !== -1 && (openIdx === -1 || implicitEnd < openIdx)) {
+    const thinkText = text.slice(0, implicitEnd).trim();
+    return { thinkText, mainText: text.slice(implicitEnd + 8).trimStart(), inThink: false, thinkComplete: thinkText.length > 0 };
+  }
   if (openIdx === -1) {
     return { thinkText: '', mainText: text, inThink: false, thinkComplete: false };
   }

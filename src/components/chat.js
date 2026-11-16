@@ -523,7 +523,7 @@ export class Chat {
   // Renders an assistant text message into `container`, handling <think> blocks.
   _renderAssistantBubble(text, container) {
     const { thinkText, mainText } = parseThinkStream(text);
-    if (thinkText) {
+    if (thinkText.trim()) {
       const details = document.createElement('details');
       details.className = 'think-block';
       details.innerHTML = `
@@ -539,7 +539,7 @@ export class Chat {
     }
     const bubble = document.createElement('div');
     bubble.className = 'msg-text prose-dark';
-    bubble.innerHTML = renderMarkdown(thinkText ? mainText : text);
+    bubble.innerHTML = renderMarkdown(mainText);
     attachCopyButtons(bubble);
     container.appendChild(bubble);
   }
@@ -725,7 +725,7 @@ export class Chat {
     }
 
     // Insert collapsed think <details> if we have thinking content
-    if (thinkText) {
+    if (thinkText.trim()) {
       const details = document.createElement('details');
       details.className = 'think-block';
       details.innerHTML = `
@@ -740,8 +740,7 @@ export class Chat {
       msgDiv.insertBefore(details, this._streamingEl);
     }
 
-    const renderedText = thinkText ? mainText : fullText;
-    this._streamingEl.innerHTML = renderMarkdown(renderedText);
+    this._streamingEl.innerHTML = renderMarkdown(mainText);
     attachCopyButtons(this._streamingEl);
     this._streamingEl = null;
     this._streamingText = '';
