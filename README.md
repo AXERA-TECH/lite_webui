@@ -31,6 +31,7 @@ The clip below shows SD 1.5 text-to-image and image-to-image generation, then Pa
 - Automatic audio-input detection for ASR models such as Qwen3-ASR
 - Multiple API endpoints with per-endpoint model management
 - Service health panel with endpoint latency and model availability checks
+- Optional read-only AX8860 device metrics in the service health panel
 - Model capability configuration (Vision, Audio, Draw, Speak) per endpoint
 - Generated images stored as data URLs — persist after backend restart
 - Local conversation history in the browser
@@ -230,6 +231,36 @@ in the UI but sends `voxcpm2` to `/v1/audio/speech`.
   - returned model IDs
   - the backend / network error on failure
 - **Copy diagnostics** copies a plain-text summary that can be pasted into an issue or sent to a colleague.
+
+### Optional Device Metrics
+
+Lite WebUI can also display read-only AX8860 board status when a metrics aggregator is available.
+
+1. Run the AX8860 `tempmon` aggregator.
+2. In **Settings → Device Metrics**, enter its read-only API URL, for example:
+
+   ```text
+   http://10.126.35.46:8888/api/all
+   ```
+
+3. Open the activity panel. Lite WebUI matches the active endpoint host and port with one of the aggregator's llama-server entries (`18080-18089`) and shows:
+   - board agent online / offline state
+   - inference offline / loading / ready / generating state
+   - model, slot, and context usage
+   - CMM and OS memory
+   - NPU temperature, network rate, and port summary
+   - tempmon agent version, BSP version, chip type, NPU TDP frequency, and llama-server process RSS
+4. Use **60s / 5m** to switch resource trends:
+   - CMM used
+   - OS available memory
+   - NPU max temperature
+   - network RX/TX
+   - generating slots
+   - llama-server RSS
+
+Missing samples break the trend line instead of being shown as zero.
+
+This feature is display-only. Lite WebUI does not use SSH, run board commands, or start/stop models.
 
 ### Speech Generation (Speak Mode)
 

@@ -21,6 +21,10 @@ describe('store – default settings', () => {
   it('default contextResetThresholdPercent is 85', () => {
     expect(store.getSettings().contextResetThresholdPercent).toBe(85);
   });
+
+  it('default device metrics URL is empty', () => {
+    expect(store.getSettings().deviceMetricsUrl).toBe('');
+  });
 });
 
 describe('store – saveSettings', () => {
@@ -41,6 +45,14 @@ describe('store – saveSettings', () => {
     const settings = store.getSettings();
     expect(settings.contextLimitTokens).toBe(4096);
     expect(settings.contextResetThresholdPercent).toBe(95);
+  });
+
+  it('normalizes optional device metrics URLs and rejects non-HTTP values', () => {
+    store.saveSettings({ deviceMetricsUrl: 'http://10.126.35.46:8888/api/all/' });
+    expect(store.getSettings().deviceMetricsUrl).toBe('http://10.126.35.46:8888/api/all');
+
+    store.saveSettings({ deviceMetricsUrl: 'javascript:alert(1)' });
+    expect(store.getSettings().deviceMetricsUrl).toBe('');
   });
 });
 

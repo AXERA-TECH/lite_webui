@@ -29,6 +29,8 @@ const DEFAULT_SETTINGS = {
   autoStopRepetition: true,
   // VoxCPM2-style raw PCM streaming. Non-streaming WAV remains the fallback.
   streamTTS: true,
+  // Optional read-only AX8860 aggregator, e.g. http://10.126.35.46:8888/api/all
+  deviceMetricsUrl: '',
 };
 
 const DEFAULT_PROMPTS = [
@@ -55,6 +57,12 @@ const DEFAULT_PROMPTS = [
 export function normalizeBaseUrl(baseUrl) {
   const raw = String(baseUrl || '').trim();
   if (!raw) return DEFAULT_SETTINGS.baseUrl;
+  return raw.replace(/\/+$/, '');
+}
+
+function normalizeDeviceMetricsUrl(value) {
+  const raw = String(value || '').trim();
+  if (!/^https?:\/\//i.test(raw)) return '';
   return raw.replace(/\/+$/, '');
 }
 
@@ -104,6 +112,7 @@ function normalizeSettings(settings = {}) {
 
   merged.autoStopRepetition = merged.autoStopRepetition !== false;
   merged.streamTTS = merged.streamTTS !== false;
+  merged.deviceMetricsUrl = normalizeDeviceMetricsUrl(merged.deviceMetricsUrl);
 
   const videoFrameMaxSide = Number(merged.videoFrameMaxSide);
   merged.videoFrameMaxSide = Number.isFinite(videoFrameMaxSide) && videoFrameMaxSide >= 64

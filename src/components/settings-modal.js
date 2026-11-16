@@ -47,6 +47,17 @@ export class SettingsModal {
               </div>
               <div id="endpoints-list" class="space-y-2.5"></div>
             </section>
+            <!-- Device Metrics -->
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Device Metrics</h3>
+              <div>
+                <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-device-metrics-url">Metrics Aggregator URL</label>
+                <input id="settings-device-metrics-url" type="url" spellcheck="false"
+                  class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors"
+                  placeholder="http://10.126.35.46:8888/api/all" />
+                <p class="mt-1 text-xs text-[var(--c-tx3)]">Optional read-only board status. Leave empty to hide device diagnostics.</p>
+              </div>
+            </section>
             <!-- Context Window -->
             <section class="border-t border-[var(--c-bd)] pt-6">
               <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Context Window</h3>
@@ -265,6 +276,7 @@ export class SettingsModal {
     this.el.querySelector('#settings-context-limit').value = settings.contextLimitTokens || '';
     this.el.querySelector('#settings-context-threshold').value =
       settings.contextResetThresholdPercent || DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
+    this.el.querySelector('#settings-device-metrics-url').value = settings.deviceMetricsUrl || '';
     this.el.querySelector('#settings-temperature').value =
       settings.temperature ?? '';
     this.el.querySelector('#settings-top-p').value =
@@ -446,6 +458,7 @@ export class SettingsModal {
 
     const autoStopRepetition = this.el.querySelector('#settings-auto-stop').checked;
     const streamTTS = this.el.querySelector('#settings-stream-tts').checked;
+    const deviceMetricsUrl = this.el.querySelector('#settings-device-metrics-url').value.trim();
     const rawVideoFrames = Number(this.el.querySelector('#settings-video-frames').value);
     const videoFrames = Number.isFinite(rawVideoFrames) && rawVideoFrames >= 1
       ? Math.min(32, Math.round(rawVideoFrames)) : 8;
@@ -466,6 +479,7 @@ export class SettingsModal {
       apiKey: activeEp?.apiKey || '',
       contextLimitTokens,
       contextResetThresholdPercent,
+      deviceMetricsUrl,
       temperature,
       topP,
       maxTokens,
