@@ -180,13 +180,14 @@ export class Chat {
     const images = videoUrl ? [] : getImageParts(msg);
     const genImages = msg.generatedImages || [];
     const generatedAudio = msg.generatedAudio || null;
-    const time = formatTime(msg.timestamp);
+    const time = msg.timestamp ? formatTime(msg.timestamp) : '';
 
     const wrapper = document.createElement('div');
     wrapper.className = 'message-enter max-w-4xl mx-auto w-full px-6 mb-4';
     wrapper.dataset.msgId = msg.timestamp || Math.random();
 
     if (isUser) {
+      const editable = this._canEditUserMessage(msg);
       const documentMeta = msg.meta?.type === 'document' ? msg.meta : null;
       const documentHtml = documentMeta ? `
         <div class="mb-2 flex items-center gap-2 rounded-xl border border-[var(--c-bd)] bg-[var(--c-card)] px-3 py-2 text-left">
@@ -217,12 +218,14 @@ export class Chat {
 
       wrapper.innerHTML = `
         <div class="flex justify-end">
-          <div class="max-w-[65%]">
+          <div class="min-w-0 max-w-[65%]">
             ${documentHtml}
             ${imageHtml}
             ${videoHtml}
             ${text ? `<div class="user-bubble px-4 py-3 msg-text text-[var(--c-utx)] whitespace-pre-wrap break-words">${escapeHtml(text)}</div>` : ''}
-            ${time ? `<div class="text-[11px] text-[var(--c-tx3)] mt-1.5 text-right">${time}</div>` : ''}
+            ${time || editable ? `<div data-user-message-meta class="mt-1.5 flex items-center justify-end gap-1.5 text-[11px] text-[var(--c-tx3)]">
+              ${time ? `<span>${time}</span>` : ''}
+            </div>` : ''}
           </div>
         </div>
       `;
@@ -232,17 +235,15 @@ export class Chat {
         imgEl.addEventListener('click', () => this._openLightbox(imgEl.src));
       });
 
-      if (this._canEditUserMessage(msg)) {
-        const actionRow = document.createElement('div');
-        actionRow.className = 'mt-1.5 flex justify-end';
+      if (editable) {
         const editBtn = document.createElement('button');
         editBtn.type = 'button';
-        editBtn.className = 'rounded-lg border border-transparent px-2 py-1 text-[11px] text-[var(--c-tx3)] transition-colors hover:border-[var(--c-bd)] hover:bg-[var(--c-ho)] hover:text-[var(--c-tx2)]';
-        editBtn.innerHTML = `${icon('wand')} Edit & rerun`;
+        editBtn.className = 'inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[var(--c-tx3)] transition-colors hover:bg-[var(--c-ho)] hover:text-[var(--c-tx2)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--c-bd-hi)] disabled:opacity-40';
+        editBtn.innerHTML = icon('edit');
         editBtn.title = 'Edit this message and rerun from this point';
+        editBtn.setAttribute('aria-label', 'Edit & rerun');
         editBtn.addEventListener('click', () => this._startUserEdit(wrapper, msg));
-        actionRow.appendChild(editBtn);
-        wrapper.querySelector('.flex.justify-end')?.appendChild(actionRow);
+        wrapper.querySelector('[data-user-message-meta]').appendChild(editBtn);
       }
     } else {
       const msgDiv = document.createElement('div');
@@ -437,6 +438,8 @@ export class Chat {
   _startUserEdit(wrapper, msg) {
     const bubble = wrapper.querySelector('.user-bubble');
     if (!bubble) return;
+    const editButton = wrapper.querySelector('[data-user-message-meta] button');
+    if (editButton) editButton.disabled = true;
     const originalText = typeof msg.content === 'string' ? msg.content : '';
     const editor = document.createElement('div');
     editor.className = 'space-y-2';
@@ -459,6 +462,10 @@ export class Chat {
 
     const close = () => {
       editor.replaceWith(bubble);
+      if (editButton) {
+        editButton.disabled = false;
+        editButton.focus();
+      }
     };
     const save = () => {
       const nextText = textarea.value.trim();

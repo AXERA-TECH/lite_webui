@@ -106,6 +106,53 @@ describe('Message edit and branches', () => {
     }));
   });
 
+  it.each([undefined, '2026-11-16T12:30:00Z'])('keeps an accessible edit action below the bubble with timestamp %s', (timestamp) => {
+    const chat = new Chat();
+    document.body.appendChild(chat.render());
+    chat.loadConversation({ messages: [{ role: 'user', content: 'A long document instruction '.repeat(30), timestamp, meta: { type: 'document', fileName: 'Long document title.pdf', kind: 'pdf' } }] });
+    const button = chat.el.querySelector('button[title="Edit this message and rerun from this point"]');
+    const meta = button.closest('[data-user-message-meta]');
+    const bubble = chat.el.querySelector('.user-bubble');
+    expect(button.title).toBe('Edit this message and rerun from this point');
+    expect(button.getAttribute('aria-label')).toBe('Edit & rerun');
+    expect(button.textContent.trim()).toBe('');
+    expect(button.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+    expect(meta.parentElement).toBe(bubble.parentElement);
+    expect(bubble.nextElementSibling).toBe(meta);
+    expect(meta.querySelector('span') !== null).toBe(Boolean(timestamp));
+    expect(chat.el.textContent).not.toContain('Invalid Date');
+    button.click();
+    expect(chat.el.querySelector('textarea[aria-label="Edit user message"]').value).toContain('A long document instruction');
+    expect(button.disabled).toBe(true);
+  });
+
+  it.each(['Cancel', 'Escape'])('restores the bubble and edit focus on %s without rerunning', (action) => {
+    const chat = new Chat();
+    document.body.appendChild(chat.render());
+    chat.loadConversation({ messages: [{ role: 'user', content: 'Original question', timestamp: '2026-11-16T12:30:00Z' }] });
+    const button = chat.el.querySelector('button[title="Edit this message and rerun from this point"]');
+    const handler = vi.fn();
+    document.addEventListener('chat:edit-user', handler);
+    try {
+      button.click();
+      const editor = chat.el.querySelector('textarea[aria-label="Edit user message"]');
+      editor.value = 'Draft edits';
+      // Repeated activation must not replace the current edit draft.
+      button.click();
+      expect(chat.el.querySelectorAll('textarea[aria-label="Edit user message"]')).toHaveLength(1);
+      expect(editor.value).toBe('Draft edits');
+      if (action === 'Escape') editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      else [...chat.el.querySelectorAll('button')].find(control => control.textContent === 'Cancel').click();
+      expect(chat.el.querySelector('textarea[aria-label="Edit user message"]')).toBeNull();
+      expect(chat.el.querySelector('.user-bubble').textContent).toBe('Original question');
+      expect(button.disabled).toBe(false);
+      expect(document.activeElement).toBe(button);
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('chat:edit-user', handler);
+    }
+  });
+
   it('saves the old path, truncates history, and reruns an edited prompt', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
     globalThis.fetch = makeStreamFetch('better answer');
