@@ -1,7 +1,9 @@
+import { sanitizeGenerationParameters } from './generation-parameters.js';
 import { DEFAULT_CONTEXT_LIMIT_TOKENS } from './context.js';
 
 // LocalStorage keys
 const KEYS = {
+  MODEL_GENERATION: 'lw_model_generation_v1',
   SETTINGS: 'lw_settings',
   CONVERSATIONS: 'lw_conversations',
   CURRENT_CONV: 'lw_current_conv',
@@ -103,7 +105,7 @@ function normalizeSettings(settings = {}) {
     ? temperature : DEFAULT_SETTINGS.temperature;
   merged.maxTokens = Number.isFinite(maxTokens) && maxTokens > 0
     ? Math.round(maxTokens) : DEFAULT_SETTINGS.maxTokens;
-  merged.topP = Number.isFinite(topP) && topP > 0 && topP <= 1
+  merged.topP = Number.isFinite(topP) && topP >= 0 && topP <= 1
     ? topP : DEFAULT_SETTINGS.topP;
   merged.systemPrompt = typeof merged.systemPrompt === 'string' ? merged.systemPrompt : '';
 
@@ -180,6 +182,37 @@ function uuid() {
 }
 
 export const store = {
+  getModelGenerationConfig(baseUrl, modelId) {
+    const profiles = load(KEYS.MODEL_GENERATION, {});
+    const models = profiles?.[normalizeBaseUrl(baseUrl)];
+    const profile = models && Object.hasOwn(models, modelId) ? models[modelId] : null;
+    if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+      return { enabled: false, parameters: {}, exists: false };
+    }
+    return { enabled: profile.enabled === true, parameters: sanitizeGenerationParameters(profile.parameters), exists: true };
+  },
+
+  saveModelGenerationConfig(baseUrl, modelId, config) {
+    if (!modelId) return;
+    const saved = load(KEYS.MODEL_GENERATION, {});
+    const profiles = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+    const url = normalizeBaseUrl(baseUrl);
+    const models = profiles[url] && typeof profiles[url] === 'object' && !Array.isArray(profiles[url]) ? profiles[url] : {};
+    const previous = this.getModelGenerationConfig(url, modelId);
+    const parameters = config?.parameters === undefined ? previous.parameters : config.parameters;
+    save(KEYS.MODEL_GENERATION, { ...profiles, [url]: { ...models, [modelId]: {
+      enabled: config?.enabled === true,
+      parameters: sanitizeGenerationParameters(parameters),
+    } } });
+  },
+
+  getGenerationParameters(baseUrl, modelId) {
+    const profile = this.getModelGenerationConfig(baseUrl, modelId);
+    if (profile.enabled) return profile.parameters;
+    const { temperature, topP, maxTokens } = this.getSettings();
+    return sanitizeGenerationParameters({ temperature, topP, maxTokens });
+  },
+
   getSettings() {
     return normalizeSettings(load(KEYS.SETTINGS, {}));
   },

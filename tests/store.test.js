@@ -281,3 +281,28 @@ describe('context default compatibility', () => {
     expect(store.getSettings().contextLimitTokens).toBe(262144);
   });
 });
+
+describe('model generation profiles', () => {
+  it('retains legacy global defaults until a model profile is enabled', () => {
+    store.saveSettings({ temperature: 0, topP: 0, maxTokens: 200, systemPrompt: 'Global instruction' });
+    expect(store.getModelGenerationConfig('http://a.local', 'a')).toEqual({ enabled: false, parameters: {}, exists: false });
+    expect(store.getGenerationParameters('http://a.local', 'a')).toEqual({ temperature: 0, topP: 0, maxTokens: 200 });
+    store.saveModelGenerationConfig('http://a.local', 'a', { enabled: true, parameters: {} });
+    expect(store.getGenerationParameters('http://a.local', 'a')).toEqual({});
+    expect(store.getSettings().systemPrompt).toBe('Global instruction');
+  });
+
+  it('isolates normalized endpoint/model pairs and preserves disabled custom values', () => {
+    store.saveSettings({ temperature: 0.8 });
+    store.saveModelGenerationConfig(' http://a.local/// ', 'model', { enabled: true, parameters: { temperature: 0, enableThinking: false, seed: 0 } });
+    store.saveModelGenerationConfig('http://b.local', 'model', { enabled: true, parameters: { topK: 20 } });
+    expect(store.getGenerationParameters('http://a.local', 'model')).toEqual({ temperature: 0, seed: 0, enableThinking: false });
+    expect(store.getGenerationParameters('http://b.local', 'model')).toEqual({ topK: 20 });
+    expect(store.getGenerationParameters('http://a.local', 'other')).toEqual({ temperature: 0.8 });
+    store.saveModelGenerationConfig('http://a.local', 'model', { enabled: false });
+    expect(store.getGenerationParameters('http://a.local', 'model')).toEqual({ temperature: 0.8 });
+    expect(store.getModelGenerationConfig('http://a.local', 'model').parameters.enableThinking).toBe(false);
+    store.saveModelGenerationConfig('http://a.local', 'model', { enabled: true });
+    expect(store.getGenerationParameters('http://a.local', 'model').enableThinking).toBe(false);
+  });
+});

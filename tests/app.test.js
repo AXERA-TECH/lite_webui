@@ -673,3 +673,68 @@ it('preserves unmatched legacy document API text while updating recalled instruc
   expect(edited.meta.instruction).toBe('Updated task');
   expect(edited.apiContent).toBe(original.apiContent);
 });
+
+describe('App effective model generation parameters', () => {
+  function setup() {
+    store.saveSettings({ baseUrl: 'http://a.local', temperature: 0.8, topP: 0.9, maxTokens: 200, systemPrompt: 'Global instruction' });
+    store.saveAvailableModels('http://a.local', ['model-a']);
+    store.setCurrentModel('http://a.local', 'model-a');
+    store.saveModelGenerationConfig('http://a.local/', 'model-a', {
+      enabled: true, parameters: { temperature: 0, seed: 0, topK: -1, enableThinking: false },
+    });
+    const bodies = [];
+    globalThis.fetch = vi.fn(async (url, options) => {
+      if (String(url).includes('/audio/transcriptions')) return { ok: true, json: async () => ({ text: 'Audio transcript' }) };
+      bodies.push(JSON.parse(options.body));
+      let read = false;
+      return { ok: true, body: { getReader: () => ({
+        read: async () => {
+          if (read) return { done: true };
+          read = true;
+          return { done: false, value: new TextEncoder().encode(`data: {"choices":[{"delta":{"content":"answer"}}]}
+
+data: [DONE]
+
+`) };
+        },
+      }) } };
+    });
+    return { ...mountApp(), bodies };
+  }
+
+  function expectCustom(body) {
+    expect(body).toMatchObject({ temperature: 0, seed: 0, top_k: -1, chat_template_kwargs: { enable_thinking: false } });
+    expect(body).not.toHaveProperty('top_p');
+    expect(body).not.toHaveProperty('max_tokens');
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'Global instruction' });
+  }
+
+  it('uses one model resolver for normal chat, regeneration, edit and document follow-up', async () => {
+    const { app, bodies } = setup();
+    await app._handleSend('Question');
+    expectCustom(bodies.at(-1));
+    await app._regenerateLastText();
+    expectCustom(bodies.at(-1));
+    const user = store.getCurrentConversation().messages.find(message => message.role === 'user');
+    await app._editUserMessage(user.timestamp, 'Edited question');
+    expectCustom(bodies.at(-1));
+    const convId = store.getCurrentConversationId();
+    await app._handleDocumentTask({ convId, model: 'model-a', instruction: 'Read it', document: {
+      status: 'ready', file: { name: 'notes.txt' }, extracted: { name: 'notes.txt', kind: 'text', text: 'Document body' },
+    } });
+    expectCustom(bodies.at(-1));
+    expect(bodies).toHaveLength(4);
+  });
+
+  it('uses model configuration for audio chat follow-up without changing transcription fields', async () => {
+    const { app, bodies } = setup();
+    const conv = store.createConversation('model-a');
+    store.setCurrentConversationId(conv.id);
+    await app._handleAudioTask({ convId: conv.id, model: 'model-a', instruction: 'Summarize', audio: { file: new File(['audio'], 'a.wav') } });
+    expect(bodies).toHaveLength(1);
+    expectCustom(bodies[0]);
+    const upload = globalThis.fetch.mock.calls.find(([url]) => String(url).includes('/audio/transcriptions'))[1].body;
+    expect(upload.has('temperature')).toBe(false);
+    expect(upload.has('chat_template_kwargs')).toBe(false);
+  });
+});

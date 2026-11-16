@@ -536,9 +536,7 @@ export class App {
       for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, {
         signal,
         onMetrics: (m) => { metrics = m; },
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        topP: settings.topP,
+        ...store.getGenerationParameters(cfg.baseUrl, model),
         idleTimeoutMs: 60000,
         retries: 2,
       })) {
@@ -1218,9 +1216,7 @@ export class App {
       for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, {
         signal,
         onMetrics: (m) => { metrics = m; },
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        topP: settings.topP,
+        ...store.getGenerationParameters(cfg.baseUrl, model),
         idleTimeoutMs: 60000,
         retries: 2,
       })) {

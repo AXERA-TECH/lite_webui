@@ -525,3 +525,54 @@ describe('DeepSeek routing across optional APIs', () => {
     }
   });
 });
+
+describe('chat generation request whitelist', () => {
+  it('omits defaults and prevents unknown options from overriding request routing', async () => {
+    const bodies = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
+      bodies.push(JSON.parse(options.body));
+      return { ok: true, body: { getReader: () => ({ read: async () => ({ done: true }) }) } };
+    }));
+    try {
+      for await (const _ of streamCompletion('http://fixture', '', 'real-model', [])) {}
+      expect(bodies[0]).toEqual({ model: 'real-model', messages: [], stream: true, stream_options: { include_usage: true } });
+      for await (const _ of streamCompletion('http://fixture', '', 'real-model', [], {
+        temperature: 0, topP: 0, seed: 0, topK: 0, minP: 0, maxTokens: 10,
+        enableThinking: false, stop: ['END'], repetitionPenalty: 1.1,
+        presencePenalty: -1, frequencyPenalty: 2,
+        model: 'wrong', messages: ['wrong'], stream: false, chat_template_kwargs: { injected: true },
+      })) {}
+      expect(bodies[1]).toEqual({ ...bodies[0], temperature: 0, top_p: 0, seed: 0,
+        top_k: 0, min_p: 0, max_tokens: 10, stop: ['END'], repetition_penalty: 1.1,
+        presence_penalty: -1, frequency_penalty: 2, chat_template_kwargs: { enable_thinking: false } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not send chat generation fields to speech, image or transcription requests', async () => {
+    const requests = [];
+    const generation = { temperature: 1, enableThinking: false, topK: 20 };
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      requests.push({ url, body: options.body });
+      return { ok: true, json: async () => String(url).includes('transcriptions') ? { text: 'text' } : { data: [] },
+        blob: async () => new Blob(['audio'], { type: 'audio/wav' }) };
+    }));
+    try {
+      await transcribeAudio('http://fixture', '', 'asr', new File(['audio'], 'a.wav'), generation);
+      await generateImage('http://fixture', '', 'image', 'prompt', generation);
+      await generateSpeech('http://fixture', '', 'speech', 'prompt', generation);
+      for (const request of requests) {
+        if (request.body instanceof FormData) {
+          expect(request.body.has('temperature')).toBe(false);
+          expect(request.body.has('chat_template_kwargs')).toBe(false);
+        } else {
+          expect(JSON.parse(request.body)).not.toHaveProperty('temperature');
+          expect(JSON.parse(request.body)).not.toHaveProperty('chat_template_kwargs');
+        }
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

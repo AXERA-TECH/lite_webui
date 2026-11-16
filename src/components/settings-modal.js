@@ -6,6 +6,7 @@ import {
   DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT,
 } from '../context.js';
 import { icon } from '../icons.js';
+import { GENERATION_PARAMETER_FIELDS, parseStopSequences, validateGenerationParameters } from '../generation-parameters.js';
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -22,6 +23,8 @@ export class SettingsModal {
     this.el = null;
     this.visible = false;
     this._fetchedModels = [];
+    this._parameterDrafts = new Map();
+    this._parameterSession = 0;
   }
 
   render() {
@@ -125,7 +128,7 @@ export class SettingsModal {
             </section>
             <!-- Generation Parameters -->
             <section class="border-t border-[var(--c-bd)] pt-6">
-              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Generation Parameters</h3>
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Default Generation Parameters</h3>
               <div class="space-y-3">
                 <div class="grid grid-cols-2 gap-3">
                   <div>
@@ -141,9 +144,15 @@ export class SettingsModal {
                 </div>
                 <div>
                   <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-max-tokens">Max Output Tokens</label>
-                  <input id="settings-max-tokens" type="number" min="1" step="1" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="unlimited" />
-                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Per-response max_tokens. Empty = no limit (may over-generate).</p>
+                  <input id="settings-max-tokens" type="number" min="1" step="1" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="server default" />
+                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Per-response output limit. Empty = server default.</p>
                 </div>
+                <p id="settings-parameter-error" role="alert" class="hidden text-xs text-rose-500"></p>
+              </div>
+            </section>
+            <section class="border-t border-[var(--c-bd)] pt-6">
+              <h3 class="text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-widest mb-3">Conversation Settings</h3>
+              <div class="space-y-3">
                 <label class="flex items-start gap-2.5 cursor-pointer select-none">
                   <input id="settings-auto-stop" type="checkbox" class="mt-0.5 accent-[var(--c-tx)]" />
                   <span class="text-xs text-[var(--c-tx2)]">
@@ -227,7 +236,8 @@ export class SettingsModal {
     const rows = [...models].sort().map(modelId => {
       const caps = getCapabilities(modelId, userCaps);
       return `
-        <div class="flex items-center justify-between py-1.5 border-b border-[var(--c-bd)] last:border-0 gap-2" data-model="${escapeHtml(modelId)}">
+        <div class="py-1.5 border-b border-[var(--c-bd)] last:border-0 min-w-0" data-model="${escapeHtml(modelId)}">
+          <div class="flex items-center justify-between gap-2 min-w-0">
           <span class="text-xs text-[var(--c-tx2)] truncate flex-1" title="${escapeHtml(modelId)}">${escapeHtml(modelId)}</span>
           <div class="flex items-center gap-3 flex-shrink-0">
             <label class="flex items-center gap-1 text-xs text-[var(--c-tx3)] cursor-pointer">
@@ -243,6 +253,8 @@ export class SettingsModal {
               <input type="checkbox" class="cap-check accent-current" data-cap="tts" ${caps.tts ? 'checked' : ''} /> Speak
             </label>
           </div>
+          </div>
+          ${this._modelParametersHtml(baseUrl, modelId)}
         </div>
       `;
     });
@@ -254,7 +266,138 @@ export class SettingsModal {
     `;
   }
 
+  _parameterUrl(baseUrl) {
+    return String(baseUrl || '').trim().replace(/\/+$/, '');
+  }
+
+  _parameterDraft(baseUrl, modelId) {
+    const url = this._parameterUrl(baseUrl);
+    const key = JSON.stringify([url, modelId]);
+    if (!this._parameterDrafts.has(key)) {
+      const saved = store.getModelGenerationConfig(url, modelId);
+      this._parameterDrafts.set(key, { baseUrl: url, modelId, enabled: saved.enabled,
+        initialized: saved.exists, raw: { ...saved.parameters }, invalid: new Set(), dirty: false, open: false, advanced: false });
+    }
+    return this._parameterDrafts.get(key);
+  }
+
+  _modelParametersHtml(baseUrl, modelId) {
+    const draft = this._parameterDraft(baseUrl, modelId);
+    const inputClass = 'min-w-0 w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-xs text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors';
+    const numeric = field => `<label class="block min-w-0 text-xs text-[var(--c-tx3)]">${escapeHtml(field.label)}
+      <input type="number" data-parameter="${field.key}" ${field.min !== undefined ? `min="${field.min}"` : ''} ${field.max !== undefined ? `max="${field.max}"` : ''} step="${field.step || 'any'}"
+        class="${inputClass} mt-1" placeholder="server default" value="${escapeHtml(draft.raw[field.key] ?? '')}" /></label>`;
+    const common = GENERATION_PARAMETER_FIELDS.filter(field => ['temperature', 'topP', 'maxTokens', 'seed'].includes(field.key));
+    const advanced = GENERATION_PARAMETER_FIELDS.filter(field => !field.type && !common.includes(field));
+    const thinking = draft.raw.enableThinking;
+    const stop = Array.isArray(draft.raw.stop) ? draft.raw.stop.join('\n') : '';
+    return `<details class="model-parameters mt-1 min-w-0" data-parameter-url="${escapeHtml(draft.baseUrl)}" ${draft.open ? 'open' : ''}>
+      <summary class="cursor-pointer text-[11px] text-[var(--c-tx3)] py-1" aria-label="Parameters for ${escapeHtml(modelId)}">Parameters <span class="model-parameter-summary opacity-70">· ${draft.enabled ? 'Custom' : 'Global defaults'}</span></summary>
+      <div class="space-y-3 pt-2 pb-1">
+        <label class="block text-xs text-[var(--c-tx3)]">Parameter mode
+          <select class="model-parameter-mode ${inputClass} mt-1">
+            <option value="global" ${!draft.enabled ? 'selected' : ''}>Use global defaults</option>
+            <option value="custom" ${draft.enabled ? 'selected' : ''}>Custom parameters</option>
+          </select>
+        </label>
+        <p class="model-parameter-error hidden text-xs text-rose-500" role="alert"></p>
+        <fieldset class="model-parameter-custom space-y-3 min-w-0 ${draft.enabled ? '' : 'hidden'}" ${draft.enabled ? '' : 'disabled'}>
+          <p class="text-[11px] text-[var(--c-tx3)]">Custom values replace the global defaults. Empty fields use the server default.</p>
+          <div class="grid grid-cols-2 gap-3 min-w-0">${common.map(numeric).join('')}</div>
+          <label class="block text-xs text-[var(--c-tx3)]">Enable Thinking
+            <select data-parameter="enableThinking" class="${inputClass} mt-1">
+              <option value="" ${typeof thinking !== 'boolean' ? 'selected' : ''}>Server default</option>
+              <option value="true" ${thinking === true ? 'selected' : ''}>Enabled</option>
+              <option value="false" ${thinking === false ? 'selected' : ''}>Disabled</option>
+            </select>
+          </label>
+          <p class="text-[11px] text-[var(--c-tx3)]">Server must support enable_thinking. Controls generation, not display.</p>
+          <details class="model-parameter-advanced" ${draft.advanced ? 'open' : ''}>
+            <summary class="cursor-pointer text-xs text-[var(--c-tx3)]">Advanced</summary>
+            <div class="space-y-3 pt-3 min-w-0">
+              <p class="text-[11px] text-[var(--c-tx3)]">Backend support varies. Top K accepts −1; 0 depends on the server. Repetition Penalty uses repetition_penalty (vLLM-style servers).</p>
+              <div class="grid grid-cols-2 gap-3 min-w-0">${advanced.map(numeric).join('')}</div>
+              <label class="block text-xs text-[var(--c-tx3)]">Stop sequences
+                <textarea data-parameter="stop" rows="3" class="${inputClass} mt-1" placeholder="One stop string per line">${escapeHtml(stop)}</textarea>
+              </label>
+              <p class="text-[11px] text-[var(--c-tx3)]">One stop string per line. Blank lines are ignored; spaces on other lines are preserved.</p>
+            </div>
+          </details>
+          <button type="button" class="model-parameter-reset text-[11px] text-[var(--c-tx3)] underline underline-offset-2 hover:text-[var(--c-tx)]">Restore server defaults</button>
+        </fieldset>
+      </div>
+    </details>`;
+  }
+
+  _captureParameterDrafts(container = this.el) {
+    container?.querySelectorAll('.model-parameters').forEach(details => {
+      const modelId = details.closest('[data-model]').dataset.model;
+      const draft = this._parameterDraft(details.dataset.parameterUrl, modelId);
+      draft.enabled = details.querySelector('.model-parameter-mode').value === 'custom';
+      draft.open = details.open;
+      draft.advanced = details.querySelector('.model-parameter-advanced').open;
+      for (const input of details.querySelectorAll('[data-parameter]')) {
+        const key = input.dataset.parameter;
+        if (input.validity.badInput) draft.invalid.add(key);
+        else if (input.value !== '') draft.invalid.delete(key);
+        draft.raw[key] = draft.invalid.has(key) ? NaN : key === 'stop' ? parseStopSequences(input.value)
+          : key === 'enableThinking' ? (input.value === '' ? null : input.value === 'true') : input.value;
+      }
+    });
+  }
+
+  _globalParameterRaw() {
+    return Object.fromEntries([['temperature', 'settings-temperature'], ['topP', 'settings-top-p'], ['maxTokens', 'settings-max-tokens']]
+      .map(([key, id]) => { const input = this.el.querySelector('#' + id); return [key, input.validity.badInput ? NaN : input.value]; }));
+  }
+
+  _updateParameterMode(details, draft) {
+    const custom = details.querySelector('.model-parameter-custom');
+    custom.hidden = !draft.enabled;
+    custom.classList.toggle('hidden', !draft.enabled);
+    custom.disabled = !draft.enabled;
+    details.querySelector('.model-parameter-summary').textContent = `· ${draft.enabled ? 'Custom' : 'Global defaults'}`;
+    for (const input of details.querySelectorAll('[data-parameter]')) {
+      const value = draft.raw[input.dataset.parameter];
+      input.value = input.dataset.parameter === 'stop' ? (value || []).join('\n')
+        : input.dataset.parameter === 'enableThinking' ? (typeof value === 'boolean' ? String(value) : '') : value ?? '';
+      input.setCustomValidity('');
+    }
+    const error = details.querySelector('.model-parameter-error'); error.hidden = true; error.classList.add('hidden');
+  }
+
+  _handleParameterEdit(event) {
+    const details = event.target.closest('.model-parameters');
+    if (!details) return;
+    const draft = this._parameterDraft(details.dataset.parameterUrl, details.closest('[data-model]').dataset.model);
+    if (event.target.matches('.model-parameter-mode')) {
+      this._captureParameterDrafts(details.parentElement);
+      if (event.target.value === 'custom' && !draft.initialized) {
+        draft.raw = this._globalParameterRaw();
+        draft.initialized = true;
+      }
+      draft.enabled = event.target.value === 'custom';
+      draft.dirty = true;
+      this._updateParameterMode(details, draft);
+    } else if (event.target.matches('[data-parameter]')) {
+      draft.invalid.delete(event.target.dataset.parameter);
+      event.target.setCustomValidity('');
+      this._captureParameterDrafts(details.parentElement);
+      draft.dirty = true;
+    }
+  }
+
   _bindEvents() {
+    this.el.addEventListener('change', event => this._handleParameterEdit(event));
+    this.el.addEventListener('input', event => { if (event.target.matches('[data-parameter]')) this._handleParameterEdit(event); });
+    this.el.addEventListener('click', event => {
+      const reset = event.target.closest('.model-parameter-reset');
+      if (!reset) return;
+      const details = reset.closest('.model-parameters');
+      const draft = this._parameterDraft(details.dataset.parameterUrl, details.closest('[data-model]').dataset.model);
+      draft.raw = {}; draft.invalid.clear(); draft.initialized = true; draft.enabled = true; draft.dirty = true;
+      this._updateParameterMode(details, draft);
+    });
     this.el.querySelector('#settings-close').addEventListener('click', () => this.hide());
     this.el.addEventListener('mousedown', (e) => {
       if (e.target === this.el) {
@@ -278,6 +421,8 @@ export class SettingsModal {
   }
 
   _loadValues() {
+    this._parameterSession++;
+    this._parameterDrafts = new Map();
     const settings = store.getSettings();
     this.el.querySelector('#settings-context-limit').value = settings.contextLimitTokens || '';
     this.el.querySelector('#settings-context-threshold').value =
@@ -298,13 +443,14 @@ export class SettingsModal {
     this.el.querySelector('#settings-document-max-chars').value = settings.documentMaxChars ?? 24000;
     this._updateVideoTokenHint();
 
-    this._renderEndpointCards();
+    this._renderEndpointCards(false);
 
     const eps = store.getEndpoints();
     this._fetchedModels = eps.flatMap(ep => store.getAvailableModels(ep.baseUrl));
   }
 
-  _renderEndpointCards() {
+  _renderEndpointCards(capture = true) {
+    if (capture) this._captureParameterDrafts();
     const active = document.activeElement;
     const oldCard = active?.closest?.('.endpoint-card');
     const oldCards = Array.from(this.el.querySelectorAll('.endpoint-card'));
@@ -340,6 +486,18 @@ export class SettingsModal {
           nameDisplay.textContent = nameInput.value.trim() || urlInput?.value.trim() || 'New Endpoint';
         });
       }
+
+      card.querySelector('.ep-url').addEventListener('input', () => {
+        const modelsArea = card.querySelector('.ep-models');
+        this._captureParameterDrafts(modelsArea);
+        const url = card.querySelector('.ep-url').value.trim();
+        const models = store.getAvailableModels(url);
+        modelsArea.dataset.epUrl = url;
+        modelsArea.innerHTML = models.length ? this._inlineCapsHtml(url, models) : '';
+        modelsArea.classList.toggle('hidden', !models.length);
+        this._bindCapCheckboxes(modelsArea);
+        card.querySelector('.ep-fetch-status').textContent = models.length ? `${models.length} models loaded` : 'Fetch models for this URL';
+      });
 
       // API key show/hide toggle
       const keyInput = card.querySelector('.ep-key');
@@ -460,6 +618,54 @@ export class SettingsModal {
   }
 
   _saveSettings() {
+    this._captureParameterDrafts();
+    const globalResult = validateGenerationParameters(this._globalParameterRaw());
+    const errorEl = this.el.querySelector('#settings-parameter-error');
+    const globalError = Object.keys(globalResult.errors)[0];
+    errorEl.textContent = globalError ? globalResult.errors[globalError] : '';
+    errorEl.classList.toggle('hidden', !globalError);
+    if (globalError) {
+      const id = { temperature: 'settings-temperature', topP: 'settings-top-p', maxTokens: 'settings-max-tokens' }[globalError];
+      this.el.querySelector('#' + id).focus();
+      return;
+    }
+    const endpointUrls = new Set(this._readEndpointCards().map(ep => this._parameterUrl(ep.baseUrl)));
+    const parameterWrites = [];
+    for (const draft of this._parameterDrafts.values()) {
+      if (!draft.dirty || !endpointUrls.has(draft.baseUrl)) continue;
+      const result = validateGenerationParameters(draft.raw);
+      const key = Object.keys(result.errors)[0];
+      if (key && !draft.enabled) {
+        const details = Array.from(this.el.querySelectorAll('.model-parameters')).find(node =>
+          node.dataset.parameterUrl === draft.baseUrl && node.closest('[data-model]').dataset.model === draft.modelId);
+        const notice = details?.querySelector('.model-parameter-error');
+        if (notice) {
+          notice.textContent = 'Global defaults are active. Invalid custom edits were not saved.';
+          notice.hidden = false; notice.classList.remove('hidden');
+        }
+        parameterWrites.push({ draft, parameters: undefined, keepDirty: true });
+        continue;
+      }
+      if (key) {
+        const details = Array.from(this.el.querySelectorAll('.model-parameters')).find(node =>
+          node.dataset.parameterUrl === draft.baseUrl && node.closest('[data-model]').dataset.model === draft.modelId);
+        if (details) {
+          details.open = true;
+          const error = details.querySelector('.model-parameter-error');
+          error.textContent = `${GENERATION_PARAMETER_FIELDS.find(field => field.key === key)?.label || key}: ${result.errors[key]}`;
+          error.hidden = false; error.classList.remove('hidden');
+          const input = details.querySelector(`[data-parameter="${key}"]`);
+          if (draft.enabled) {
+            const advanced = input.closest('.model-parameter-advanced');
+            if (advanced) advanced.open = true;
+            input.setCustomValidity(result.errors[key]); input.focus();
+          }
+          else details.querySelector('.model-parameter-mode').focus();
+        } else { errorEl.textContent = `${draft.modelId}: ${result.errors[key]}`; errorEl.classList.remove('hidden'); }
+        return;
+      }
+      parameterWrites.push({ draft, parameters: result.values });
+    }
     const rawContextLimit = this.el.querySelector('#settings-context-limit').value.trim();
     const contextLimitTokens = rawContextLimit
       ? Math.max(1024, Math.round(Number(rawContextLimit) || DEFAULT_CONTEXT_LIMIT_TOKENS))
@@ -469,13 +675,8 @@ export class SettingsModal {
       ? Math.min(95, Math.max(50, Math.round(rawThreshold)))
       : DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
 
-    const rawTemp = this.el.querySelector('#settings-temperature').value.trim();
-    const rawTopP = this.el.querySelector('#settings-top-p').value.trim();
-    const rawMaxTokens = this.el.querySelector('#settings-max-tokens').value.trim();
     const systemPrompt = this.el.querySelector('#settings-system-prompt').value.trim();
-    const temperature = rawTemp === '' ? null : Number(rawTemp);
-    const topP = rawTopP === '' ? null : Number(rawTopP);
-    const maxTokens = rawMaxTokens === '' ? null : Math.max(1, Math.round(Number(rawMaxTokens) || 0));
+    const { temperature = null, topP = null, maxTokens = null } = globalResult.values;
 
     const autoStopRepetition = this.el.querySelector('#settings-auto-stop').checked;
     const streamTTS = this.el.querySelector('#settings-stream-tts').checked;
@@ -512,6 +713,11 @@ export class SettingsModal {
       streamTTS,
     });
 
+    for (const { draft, parameters, keepDirty } of parameterWrites) {
+      store.saveModelGenerationConfig(draft.baseUrl, draft.modelId, { enabled: draft.enabled, parameters });
+      draft.dirty = !!keepDirty;
+    }
+
     const btn = this.el.querySelector('#settings-save');
     btn.textContent = 'Saved!';
     setTimeout(() => { btn.textContent = 'Save Settings'; }, 2000);
@@ -521,6 +727,8 @@ export class SettingsModal {
   }
 
   async _fetchModels(endpointId = null) {
+    this._captureParameterDrafts();
+    const parameterSession = this._parameterSession;
     let ep;
     const card = endpointId
       ? Array.from(this.el?.querySelectorAll('.endpoint-card') || []).find(card => card.dataset.endpointId === endpointId)
@@ -555,8 +763,10 @@ export class SettingsModal {
         document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: '' } }));
       }
 
-      // Update inline caps section in this card
-      if (card) {
+      // Only update the card if it still represents this request's URL and session.
+      if (card && parameterSession === this._parameterSession && this.el.contains(card) &&
+          this._parameterUrl(card.querySelector('.ep-url').value) === this._parameterUrl(ep.baseUrl)) {
+        this._captureParameterDrafts(card);
         const epModels = card.querySelector('.ep-models');
         if (epModels) {
           epModels.dataset.epUrl = ep.baseUrl;
@@ -576,12 +786,13 @@ export class SettingsModal {
 
       document.dispatchEvent(new CustomEvent('models:changed'));
     } catch (err) {
-      if (card) {
-        const epModels = card.querySelector('.ep-models');
-        if (epModels) {
-          epModels.innerHTML = `<p class="text-xs text-red-400 pt-2 border-t border-[var(--c-bd)]">Failed to fetch: ${escapeHtml(err.message)}</p>`;
-          epModels.classList.remove('hidden');
-        }
+      if (card && parameterSession === this._parameterSession && this.el.contains(card) &&
+          this._parameterUrl(card.querySelector('.ep-url').value) === this._parameterUrl(ep.baseUrl)) {
+        this._captureParameterDrafts(card);
+        const status = card.querySelector('.ep-fetch-status');
+        status.classList.remove('flex-shrink-0');
+        status.classList.add('min-w-0', 'break-words');
+        status.textContent = `Failed to fetch: ${err.message}`;
       }
     } finally {
       if (btn) {
@@ -680,6 +891,7 @@ export class SettingsModal {
   hide() {
     if (!this.visible) return;
     this.visible = false;
+    this._parameterSession++;
     document.removeEventListener('keydown', this._onModalKeydown, true);
     document.removeEventListener('focusin', this._onModalFocus, true);
     document.removeEventListener('compositionstart', this._onCompositionStart, true);

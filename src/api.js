@@ -1,3 +1,5 @@
+import { buildGenerationRequestParameters } from './generation-parameters.js';
+
 const DEV_PROXY_BASE = '/lw-proxy';
 const NON_ASCII_TOKEN_ESTIMATE = 1;
 const ASCII_CHARS_PER_TOKEN = 4;
@@ -281,7 +283,6 @@ export function formatTps(tps) {
 export async function* streamCompletion(baseUrl, apiKey, model, messages, options = {}) {
   const {
     onUsage, onMetrics, signal,
-    temperature = null, maxTokens = null, topP = null, seed = null,
     idleTimeoutMs = 0, retries = 0,
   } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
@@ -289,19 +290,10 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
 
   let serverUsage = null;
 
-  const bodyObj = { model, messages, stream: true, stream_options: { include_usage: true } };
-  if (temperature !== null && temperature !== '' && Number.isFinite(Number(temperature))) {
-    bodyObj.temperature = Number(temperature);
-  }
-  if (maxTokens !== null && maxTokens !== '' && Number.isFinite(Number(maxTokens)) && Number(maxTokens) > 0) {
-    bodyObj.max_tokens = Math.round(Number(maxTokens));
-  }
-  if (topP !== null && topP !== '' && Number.isFinite(Number(topP))) {
-    bodyObj.top_p = Number(topP);
-  }
-  if (seed !== null && seed !== '' && Number.isFinite(Number(seed))) {
-    bodyObj.seed = Math.floor(Number(seed));
-  }
+  const bodyObj = {
+    ...buildGenerationRequestParameters(options),
+    model, messages, stream: true, stream_options: { include_usage: true },
+  };
 
   // Internal controller: combines the caller's abort signal with an idle timeout.
   // The idle timer is re-armed on every chunk received, so a long but healthy
