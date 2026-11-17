@@ -102,11 +102,17 @@ describe('document messages', () => {
 
     expect(bar._pendingDocument.status).toBe('ready');
     expect(bar.el.querySelector('#document-preview-area').classList.contains('hidden')).toBe(false);
+    const status = bar.el.querySelector('#document-status');
+    expect(status.textContent).toMatch(/^\d+ chars · /);
+    // Keep the attachment preview compact; do not echo the extracted document body.
+    expect(status.textContent).not.toContain('benchmark report');
 
     const events = [];
     document.addEventListener('inputbar:send', (e) => events.push(e.detail), { once: true });
     bar.el.querySelector('#message-input').value = '总结关键数据';
-    bar.el.querySelector('#send-btn').click();
+    bar.el.querySelector('#message-input').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+    );
 
     expect(events).toHaveLength(1);
     expect(events[0].document.extracted.name).toBe('benchmark.md');

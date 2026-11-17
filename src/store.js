@@ -33,7 +33,7 @@ const DEFAULT_SETTINGS = {
   autoStopRepetition: true,
   // VoxCPM2-style raw PCM streaming. Non-streaming WAV remains the fallback.
   streamTTS: true,
-  // Optional read-only AX8860 aggregator, e.g. http://10.126.35.46:8888/api/all
+  // Optional read-only AX8860 aggregator, e.g. http://192.0.2.20:8888/api/all
   deviceMetricsUrl: '',
 };
 
@@ -61,7 +61,11 @@ const DEFAULT_PROMPTS = [
 export function normalizeBaseUrl(baseUrl) {
   const raw = String(baseUrl || '').trim();
   if (!raw) return DEFAULT_SETTINGS.baseUrl;
-  return raw.replace(/\/+$/, '');
+  // OpenAI-compatible UIs are frequently given a copied Base URL ending in /v1.
+  // LiteWebUI appends /v1/... itself, so normalize both styles to the server root.
+  return raw
+    .replace(/\/+$/, '')
+    .replace(/\/v1$/i, '');
 }
 
 function normalizeDeviceMetricsUrl(value) {

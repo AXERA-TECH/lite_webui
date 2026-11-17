@@ -39,7 +39,7 @@ Then configure one endpoint:
 
 1. Open **Settings**.
 2. Enter the server root URL, for example `http://127.0.0.1:18080`.
-   Do **not** append `/v1`.
+   A copied URL ending in `/v1` is also accepted and normalized automatically.
 3. Enter an API key if your server requires one.
 4. Click **Fetch Models**.
 5. Select a model in the top bar.
@@ -54,6 +54,155 @@ npm run preview
 
 The production output is static files. Your model API must allow browser CORS,
 be served behind a reverse proxy, or share the same origin as Lite WebUI.
+
+### Deploy the production build on an AX8860 board
+
+Lite WebUI itself is a static frontend; it does not require Node.js on the board.
+The AX8860 image only needs Python's built-in HTTP server, which is already
+available on the current Debian 13 board image.
+
+The tested field-demo layout is:
+
+| Service | Board port | Purpose |
+|---|---:|---|
+| tempmon | 8080 | Read-only board agent |
+| llama-server | 18080-18089 | OpenAI-compatible inference ports |
+| Model Manager | 18090 | Model lifecycle management |
+| Lite WebUI | 18100 | Static production UI |
+
+Keep port 18100 outside the llama-server port pool so Model Manager cannot
+allocate it for a model runtime.
+
+#### 1. Build and copy the static files
+
+On the development host:
+
+```bash
+cd lite_webui
+npm run build
+tar -czf litewebui-dist.tar.gz -C dist .
+scp litewebui-dist.tar.gz root@<board-ip>:/tmp/
+```
+
+On the board:
+
+```bash
+mkdir -p /mnt/tangqi/litewebui
+tar -xzf /tmp/litewebui-dist.tar.gz -C /mnt/tangqi/litewebui
+```
+
+The current build is only about 4.7 MB and contains all JavaScript, CSS, fonts,
+and lazy-loaded document parsers. It has no runtime dependency on an external
+CDN.
+
+#### 2. Create a persistent static-service unit
+
+Create `/etc/systemd/system/litewebui.service` on the board:
+
+```ini
+[Unit]
+Description=AXERA Lite WebUI static server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/tangqi/litewebui
+ExecStart=/usr/bin/python3 -m http.server 18100 --bind 0.0.0.0 --directory /mnt/tangqi/litewebui
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start it:
+
+```bash
+systemctl daemon-reload
+systemctl enable --now litewebui.service
+systemctl status litewebui.service --no-pager
+```
+
+If a transient test unit is still running, stop it before enabling the
+persistent service:
+
+```bash
+systemctl stop lite-webui-demo.service 2>/dev/null || true
+```
+
+Open the UI from a browser:
+
+```text
+http://<board-ip>:18100/
+```
+
+#### 3. Configure the inference endpoint
+
+In **Settings**, use the llama-server root URL:
+
+```text
+http://<board-ip>:18080
+```
+
+A copied OpenAI-style URL ending in `/v1` is also accepted and normalized
+automatically:
+
+```text
+http://<board-ip>:18080/v1
+```
+
+The browser calls llama-server directly. The AXERA llama-server build used for
+the field demo returns the required CORS headers, so a reverse proxy is not
+required for this layout.
+
+Browser settings are stored per origin. When moving from a development address
+such as `http://<development-host>:5176/` to the board address
+`http://<board-ip>:18100/`, configure the endpoint and model capabilities once
+in the new browser.
+
+#### 4. Update an installed board copy
+
+On the development host:
+
+```bash
+npm run build
+tar -czf litewebui-dist.tar.gz -C dist .
+scp litewebui-dist.tar.gz root@<board-ip>:/tmp/
+```
+
+On the board:
+
+```bash
+tar -xzf /tmp/litewebui-dist.tar.gz -C /mnt/tangqi/litewebui
+systemctl restart litewebui.service
+```
+
+#### Field-demo notes
+
+- Start or enable the required llama-server runtime separately; Lite WebUI is
+  only the chat frontend and does not launch a model by itself.
+- Use a fixed board IP or a direct/private network for the demo. If the board
+  IP changes, update the API Base URL in Settings.
+- Microphone capture in browsers normally requires HTTPS or `localhost`. For an
+  offline HTTP demo, prefer uploading an audio file instead of live recording.
+- The optional Device Metrics URL should point to an aggregator reachable from
+  the demo laptop, for example `http://<monitor-host>:8888/api/all`.
+- Python's static server does not compress files. The first local-network load
+  is still small, but nginx or another gzip-capable server can be used later for
+  a larger deployment.
 
 ## What can it do?
 
@@ -71,6 +220,25 @@ be served behind a reverse proxy, or share the same origin as Lite WebUI.
 | Diagnostics | Check endpoint health and AX8860 board state | `/v1/models`, optional metrics API |
 | Performance | Show TTFT, prefill, decode, and token counts reported by the backend | Streaming response metadata |
 
+## Continuous integration
+
+GitHub Actions runs on every pull request and on pushes to `main`.
+
+The CI job:
+
+1. Installs dependencies from the lockfile with `npm ci`.
+2. Rejects unresolved conflict markers and whitespace errors.
+3. Runs all Vitest unit/component tests with `npm test`.
+4. Builds the production bundle with `npm run build`.
+5. Starts `vite preview` and smoke-tests the generated HTML, JavaScript, and CSS.
+6. Uploads the production `dist/` directory as a build artifact.
+
+The workflow is defined in:
+
+```text
+.github/workflows/ci.yml
+```
+
 ## First-time setup
 
 ### 1. API endpoint
@@ -83,15 +251,16 @@ http://127.0.0.1:8000
 https://your-api.example.com
 ```
 
-For DeepSeek, use `https://api.deepseek.com` with your API key. Do not append
-`/v1`; model discovery and chat use DeepSeek’s `/models` and
-`/chat/completions` routes.
-
-Do not use:
+The following copied OpenAI-style URL is also accepted and normalized
+automatically:
 
 ```text
 http://127.0.0.1:18080/v1
 ```
+
+For DeepSeek, use `https://api.deepseek.com` with your API key. Lite WebUI
+routes DeepSeek model discovery and chat to `/models` and `/chat/completions`
+without the conventional `/v1` prefix.
 
 ### 2. Context window
 
@@ -298,7 +467,7 @@ If you have an AX8860 `tempmon` aggregator, enter its read-only API URL under
 **Settings → Device Metrics**:
 
 ```text
-http://10.126.35.46:8888/api/all
+http://<monitor-host>:8888/api/all
 ```
 
 The panel can show:
@@ -422,7 +591,7 @@ Clearing the browser's site data resets the app.
 
 | Problem | What to check |
 |---|---|
-| Fetch Models fails | Base URL must not include `/v1`; API must implement `GET /v1/models`; check CORS in production |
+| Fetch Models fails | API must implement `GET /v1/models`; check the URL, port, and CORS in production |
 | Model list is empty | Click **Fetch Models** and inspect the error in Service Health |
 | Image button disabled | Enable **Vision** for the selected model |
 | Draw button disabled | Enable **Draw** and confirm image API support |

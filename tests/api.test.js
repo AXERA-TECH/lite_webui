@@ -32,18 +32,23 @@ describe('provider endpoint paths', () => {
 
 describe('buildRequestConfig – dev mode (isDev=true)', () => {
   it('uses /lw-proxy as urlBase', () => {
-    const { urlBase } = buildRequestConfig('http://10.168.21.119:8000', '', true);
+    const { urlBase } = buildRequestConfig('http://203.0.113.10:8000', '', true);
     expect(urlBase).toBe('/lw-proxy');
   });
 
   it('sets X-LW-Target header to the cleaned baseUrl', () => {
-    const { headers } = buildRequestConfig('http://10.168.21.119:8000/', '', true);
-    expect(headers['X-LW-Target']).toBe('http://10.168.21.119:8000');
+    const { headers } = buildRequestConfig('http://203.0.113.10:8000/', '', true);
+    expect(headers['X-LW-Target']).toBe('http://203.0.113.10:8000');
   });
 
   it('strips trailing slash from X-LW-Target', () => {
     const { headers } = buildRequestConfig('http://localhost:8000/', '', true);
     expect(headers['X-LW-Target']).toBe('http://localhost:8000');
+  });
+
+  it('normalizes a copied OpenAI-style /v1 base URL', () => {
+    const { headers } = buildRequestConfig('http://192.0.2.10:18080/v1/', '', true);
+    expect(headers['X-LW-Target']).toBe('http://192.0.2.10:18080');
   });
 
   it('does NOT add Authorization header when apiKey is empty', () => {
@@ -59,8 +64,13 @@ describe('buildRequestConfig – dev mode (isDev=true)', () => {
 
 describe('buildRequestConfig – prod mode (isDev=false)', () => {
   it('uses cleaned baseUrl as urlBase', () => {
-    const { urlBase } = buildRequestConfig('http://10.168.21.119:8000/', '', false);
-    expect(urlBase).toBe('http://10.168.21.119:8000');
+    const { urlBase } = buildRequestConfig('http://203.0.113.10:8000/', '', false);
+    expect(urlBase).toBe('http://203.0.113.10:8000');
+  });
+
+  it('normalizes a trailing /v1 so production direct requests do not call /v1/v1', () => {
+    const { urlBase } = buildRequestConfig('http://192.0.2.10:18080/v1', '', false);
+    expect(urlBase).toBe('http://192.0.2.10:18080');
   });
 
   it('does NOT set X-LW-Target header', () => {
@@ -90,9 +100,9 @@ describe('fetchModels (dev mode via buildRequestConfig isDev=true default in Vit
       return { ok: true, json: async () => ({ data: [{ id: 'model-a' }] }) };
     }));
 
-    await fetchModels('http://10.168.21.119:8000', '');
+    await fetchModels('http://203.0.113.10:8000', '');
     expect(captured.url).toBe('/lw-proxy/v1/models');
-    expect(captured.headers['X-LW-Target']).toBe('http://10.168.21.119:8000');
+    expect(captured.headers['X-LW-Target']).toBe('http://203.0.113.10:8000');
     vi.unstubAllGlobals();
   });
 
@@ -118,7 +128,7 @@ describe('fetchModels (dev mode via buildRequestConfig isDev=true default in Vit
       json: async () => ({ data: [{ id: 'AXERA-TECH/Qwen3-VL-2B-Instruct' }] }),
     })));
 
-    const models = await fetchModels('http://10.168.21.119:8000', '');
+    const models = await fetchModels('http://203.0.113.10:8000', '');
     expect(models).toContain('AXERA-TECH/Qwen3-VL-2B-Instruct');
     vi.unstubAllGlobals();
   });
@@ -168,6 +178,30 @@ describe('fetchModels (dev mode via buildRequestConfig isDev=true default in Vit
   });
 });
 
+describe('streamCompletion – server error events', () => {
+  it('surfaces an SSE error instead of ending as an empty response', async () => {
+    const chunk = 'data: ' + JSON.stringify({
+      error: { code: 'mtmd_error', message: 'failed to process mtmd chunk' },
+    }) + '\n\n';
+    let index = 0;
+    const reader = {
+      read: vi.fn(async () => (
+        index >= 1
+          ? { done: true }
+          : { done: false, value: new TextEncoder().encode(chunk) }
+      )),
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      body: { getReader: () => reader },
+    })));
+
+    const stream = streamCompletion('http://localhost:18080', '', 'model-a', []);
+    await expect(stream.next()).rejects.toThrow('failed to process mtmd chunk');
+    vi.unstubAllGlobals();
+  });
+});
+
 // ─── streamCompletion ────────────────────────────────────────────────────────
 
 describe('streamCompletion (dev mode)', () => {
@@ -193,11 +227,11 @@ describe('streamCompletion (dev mode)', () => {
     }));
 
     const chunks = [];
-    for await (const chunk of streamCompletion('http://10.168.21.119:8000', '', 'model', [])) {
+    for await (const chunk of streamCompletion('http://203.0.113.10:8000', '', 'model', [])) {
       chunks.push(chunk);
     }
     expect(captured.url).toBe('/lw-proxy/v1/chat/completions');
-    expect(captured.headers['X-LW-Target']).toBe('http://10.168.21.119:8000');
+    expect(captured.headers['X-LW-Target']).toBe('http://203.0.113.10:8000');
     expect(chunks).toContain('Hi');
     vi.unstubAllGlobals();
   });

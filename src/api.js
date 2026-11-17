@@ -34,7 +34,10 @@ export function apiEndpointPath(baseUrl, resourcePath) {
  * Exported for unit testing with an explicit isDev parameter.
  */
 export function buildRequestConfig(baseUrl, apiKey, isDev = import.meta.env.DEV, options = {}) {
-  const cleanBase = String(baseUrl || '').trim().replace(/\/+$/, '');
+  const cleanBase = String(baseUrl || '')
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/v1$/i, '');
   const { contentType = 'application/json' } = options;
   const headers = {};
   if (contentType) headers['Content-Type'] = contentType;
@@ -419,14 +422,20 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
         const data = trimmed.slice(6);
         if (data === '[DONE]') { streamDone = true; break; }
 
+        let json = null;
         try {
-          const json = JSON.parse(data);
+          json = JSON.parse(data);
+        } catch {
+          // ignore malformed SSE lines
+        }
+        if (json?.error) {
+          throw new Error(json.error.message || 'server stream error');
+        }
+        if (json) {
           captureFinalMetrics(json);
           const delta = json.choices?.[0]?.delta;
           const text = emitDelta(delta);
           if (text) yield text;
-        } catch {
-          // ignore malformed SSE lines
         }
       }
       if (streamDone) break;
@@ -436,13 +445,19 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     if (buffer.trim().startsWith('data: ')) {
       const data = buffer.trim().slice(6);
       if (data && data !== '[DONE]') {
+        let json = null;
         try {
-          const json = JSON.parse(data);
+          json = JSON.parse(data);
+        } catch { /* ignore */ }
+        if (json?.error) {
+          throw new Error(json.error.message || 'server stream error');
+        }
+        if (json) {
           captureFinalMetrics(json);
           const delta = json.choices?.[0]?.delta;
           const text = emitDelta(delta);
           if (text) yield text;
-        } catch { /* ignore */ }
+        }
       }
     }
     if (reasoningOpen) yield '</think>';

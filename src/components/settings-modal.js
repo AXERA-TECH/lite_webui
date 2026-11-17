@@ -63,7 +63,7 @@ export class SettingsModal {
                 <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-device-metrics-url">Metrics Aggregator URL</label>
                 <input id="settings-device-metrics-url" type="url" spellcheck="false"
                   class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors"
-                  placeholder="http://10.126.35.46:8888/api/all" />
+                  placeholder="http://192.0.2.20:8888/api/all" />
                 <p class="mt-1 text-xs text-[var(--c-tx3)]">Optional read-only board status. Leave empty to hide device diagnostics.</p>
               </div>
             </section>
@@ -206,6 +206,7 @@ export class SettingsModal {
           <div>
             <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">API Base URL</label>
             <input class="ep-url w-full bg-[var(--c-card)] border border-[var(--c-bd)] rounded-lg px-2.5 py-1.5 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" type="url" placeholder="http://127.0.0.1:8000" value="${escapeHtml(ep.baseUrl || '')}" />
+            <p class="mt-1 text-[11px] text-[var(--c-tx3)]">Server root is preferred; a trailing /v1 is normalized automatically.</p>
           </div>
           <div>
             <label class="block text-[11px] font-semibold text-[var(--c-tx3)] uppercase tracking-wider mb-1.5">

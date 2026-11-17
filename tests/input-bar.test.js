@@ -434,6 +434,32 @@ describe('InputBar – multi-endpoint capability isolation', () => {
   });
 });
 
+describe('InputBar – AXERA vision image preprocessing', () => {
+  it('resizes large screenshots to an even 32-pixel-aligned patch grid', () => {
+    const bar = makeBar();
+    const corrected = bar._visionImageDimensions(1920, 992);
+    const first = bar._visionImageDimensions(2917, 963);
+
+    expect(corrected).toEqual({
+      width: 864,
+      height: 448,
+      originalWidth: 1920,
+      originalHeight: 992,
+    });
+    expect(first).toEqual({
+      width: 864,
+      height: 288,
+      originalWidth: 2917,
+      originalHeight: 963,
+    });
+    for (const size of [corrected, first]) {
+      expect(size.width % 32).toBe(0);
+      expect(size.height % 32).toBe(0);
+      expect((size.width / 16) * (size.height / 16)).toBeLessThanOrEqual(3072);
+    }
+  });
+});
+
 describe('InputBar – input recall and composition', () => {
   function key(input, key, options = {}) {
     const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options });

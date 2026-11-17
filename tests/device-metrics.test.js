@@ -12,7 +12,7 @@ const payload = {
   boards: [
     {
       name: 'Shanghai',
-      ip: '10.126.9.246',
+      ip: '192.0.2.10',
       ok: true,
       age_ms: 120,
       data: {
@@ -50,14 +50,14 @@ afterEach(() => {
 
 describe('findActiveDevice', () => {
   it('matches the active endpoint host and llama-server port', () => {
-    const match = findActiveDevice(payload, 'http://10.126.9.246:18082/v1');
+    const match = findActiveDevice(payload, 'http://192.0.2.10:18082/v1');
     expect(match.board?.name).toBe('Shanghai');
     expect(match.server?.port).toBe(18082);
     expect(match.server?.state).toBe('generating');
   });
 
   it('does not guess when multiple servers exist and the endpoint port differs', () => {
-    const match = findActiveDevice(payload, 'http://10.126.9.246:18081/v1');
+    const match = findActiveDevice(payload, 'http://192.0.2.10:18081/v1');
     expect(match.board?.name).toBe('Shanghai');
     expect(match.server).toBeNull();
   });
@@ -90,9 +90,9 @@ describe('device history helpers', () => {
 describe('HealthPanel device metrics', () => {
   it('renders read-only device metrics for the active endpoint', async () => {
     vi.useFakeTimers();
-    store.saveEndpoints([{ id: 'ep1', name: 'Shanghai', baseUrl: 'http://10.126.9.246:18082/v1', apiKey: '' }]);
+    store.saveEndpoints([{ id: 'ep1', name: 'Shanghai', baseUrl: 'http://192.0.2.10:18082/v1', apiKey: '' }]);
     store.setActiveEndpointId('ep1');
-    store.saveSettings({ deviceMetricsUrl: 'http://10.126.35.46:8888/api/all' });
+    store.saveSettings({ deviceMetricsUrl: 'http://192.0.2.20:8888/api/all' });
     globalThis.fetch = vi.fn(async (url) => {
       if (String(url).includes('/api/all')) {
         return { ok: true, json: async () => payload };
@@ -123,9 +123,9 @@ describe('HealthPanel device metrics', () => {
 
   it('switches between the 60 second and 5 minute history windows', async () => {
     vi.useFakeTimers();
-    store.saveEndpoints([{ id: 'ep1', name: 'Shanghai', baseUrl: 'http://10.126.9.246:18082/v1', apiKey: '' }]);
+    store.saveEndpoints([{ id: 'ep1', name: 'Shanghai', baseUrl: 'http://192.0.2.10:18082/v1', apiKey: '' }]);
     store.setActiveEndpointId('ep1');
-    store.saveSettings({ deviceMetricsUrl: 'http://10.126.35.46:8888/api/all' });
+    store.saveSettings({ deviceMetricsUrl: 'http://192.0.2.20:8888/api/all' });
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({ generated_at: 70, ...payload }),
@@ -146,7 +146,7 @@ describe('HealthPanel device metrics', () => {
   });
 
   it('hides device diagnostics when no metrics URL is configured', async () => {
-    store.saveEndpoints([{ id: 'ep1', name: 'Shanghai', baseUrl: 'http://10.126.9.246:18082/v1', apiKey: '' }]);
+    store.saveEndpoints([{ id: 'ep1', name: 'Shanghai', baseUrl: 'http://192.0.2.10:18082/v1', apiKey: '' }]);
     store.setActiveEndpointId('ep1');
     store.saveSettings({ deviceMetricsUrl: '' });
 
