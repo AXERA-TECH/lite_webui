@@ -27,7 +27,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          # Vitest 4 resolves a nested Vite 8 dependency. The npm version shipped
+          # with Node 24 handles its optional esbuild peers consistently with
+          # the lockfile; Node 22's bundled npm 10 currently fails npm ci.
+          node-version: "24"
           cache: npm
 
       - name: Install locked dependencies
@@ -101,7 +104,7 @@ jobs:
           {
             echo "### Lite WebUI CI summary"
             echo
-            echo "- Node.js: 22.x"
+            echo "- Node.js: 24.x"
             echo "- Tests: \`npm test\`"
             echo "- Production build: \`npm run build\`"
             echo "- Preview smoke test: passed"
