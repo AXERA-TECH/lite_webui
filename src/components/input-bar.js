@@ -23,6 +23,11 @@ const VIDEO_SIZE_LIMIT_MB = 50;
 // Defaults live in the settings dialog (Video Input section).
 const DEFAULT_VIDEO_FRAME_COUNT = 8;
 const DEFAULT_VIDEO_FRAME_MAX_SIDE = 448;
+// AXERA Qwen vision kernels currently require an even patch grid and accept at
+// most 3072 ViT patches. 32-pixel alignment keeps 16-pixel patch counts even;
+// an 864-pixel square stays below the patch ceiling (54 * 54 = 2916).
+const MAX_VISION_IMAGE_SIDE = 864;
+const VISION_IMAGE_ALIGNMENT = 32;
 
 function escapeHtml(str) {
   return String(str)
@@ -152,7 +157,7 @@ export class InputBar {
               </div>
               <div class="min-w-0 flex-1">
                 <div id="document-file-name" class="truncate text-[13px] text-[var(--c-tx2)]"></div>
-                <div id="document-status" class="text-[11px] text-[var(--c-tx3)]">Extracting text…</div>
+                <div id="document-status" class="truncate text-[11px] text-[var(--c-tx3)]" title="Document extraction status">Extracting text…</div>
               </div>
               <button id="remove-document-btn"
                 class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border border-[var(--c-bd)] bg-[var(--c-ho)] text-[var(--c-tx3)] transition-colors hover:text-[var(--c-tx2)]"
@@ -534,15 +539,22 @@ export class InputBar {
     if (!file.type.startsWith('image/')) return;
     const token = this._beginMediaRead();
     try {
-      const dataUrl = await this._fileToDataUrl(file);
+      const prepared = await this._prepareImageDataUrl(file);
       if (token !== this._attachmentReadToken) return;
       this._clearImage();
       this._clearVideo();
       this._clearAudio();
       this._clearDocument();
-      this._pendingImage = { dataUrl, file };
-      this._showImagePreview(dataUrl);
-      if (this._drawMode) this.el.querySelector('#message-input').placeholder = 'Describe how to modify the image…';
+      this._pendingImage = {
+        dataUrl: prepared.dataUrl,
+        file,
+        width: prepared.width,
+        height: prepared.height,
+        originalWidth: prepared.originalWidth,
+        originalHeight: prepared.originalHeight,
+      };
+      this._showImagePreview(prepared.dataUrl);
+      if (this._drawMode) this.el.querySelector('#message-input').placeholder = 'Describe how to modify this image…';
       this._refreshDraftState();
     } finally {
       if (token === this._attachmentReadToken) {
@@ -551,6 +563,67 @@ export class InputBar {
       }
     }
   }
+
+  _visionImageDimensions(width, height) {
+    const sourceWidth = Math.max(1, Number(width) || 1);
+    const sourceHeight = Math.max(1, Number(height) || 1);
+    const scale = Math.min(1, MAX_VISION_IMAGE_SIDE / Math.max(sourceWidth, sourceHeight));
+    const align = (value) => Math.max(
+      VISION_IMAGE_ALIGNMENT,
+      Math.round((value * scale) / VISION_IMAGE_ALIGNMENT) * VISION_IMAGE_ALIGNMENT,
+    );
+    return {
+      width: align(sourceWidth),
+      height: align(sourceHeight),
+      originalWidth: sourceWidth,
+      originalHeight: sourceHeight,
+    };
+  }
+
+  _loadImage(url) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('cannot load image'));
+      image.src = url;
+    });
+  }
+
+  async _prepareImageDataUrl(file) {
+    // Read through the same FileReader path used by tests and the original
+    // implementation. If image decoding or canvas drawing is unavailable, this
+    // still leaves a usable original attachment instead of blocking the draft.
+    const originalDataUrl = await this._fileToDataUrl(file);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return { dataUrl: originalDataUrl, width: 0, height: 0, originalWidth: 0, originalHeight: 0 };
+    }
+
+    try {
+      const image = await this._loadImage(originalDataUrl);
+      const dimensions = this._visionImageDimensions(image.naturalWidth, image.naturalHeight);
+      canvas.width = dimensions.width;
+      canvas.height = dimensions.height;
+      context.drawImage(image, 0, 0, dimensions.width, dimensions.height);
+      // Preserve screenshot/text edges with PNG; use JPEG for opaque camera photos.
+      const lossless = ['image/png', 'image/webp', 'image/gif'].includes(file.type);
+      return {
+        ...dimensions,
+        dataUrl: canvas.toDataURL(lossless ? 'image/png' : 'image/jpeg', 0.92),
+      };
+    } catch (err) {
+      console.warn('[image] resize unavailable, sending original:', err?.message || err);
+      return {
+        dataUrl: originalDataUrl,
+        width: 0,
+        height: 0,
+        originalWidth: 0,
+        originalHeight: 0,
+      };
+    }
+  }
+
 
   async _handleDocumentFile(file) {
     if (!isDocumentFile(file)) return;
@@ -586,7 +659,7 @@ export class InputBar {
           ? 'warning'
           : 'success';
       this._showDocumentStatus(
-        `${extracted.text.toLocaleString()} chars · ≈${tokens} tokens · ${contextPercent.toFixed(0)}% ctx${extracted.truncated ? ' · truncated' : ''}${extracted.pages ? ` · ${extracted.pages} pages` : ''}`,
+        `${extracted.text.length.toLocaleString()} chars · ≈${tokens} tokens · ${contextPercent.toFixed(0)}% ctx${extracted.truncated ? ' · truncated' : ''}${extracted.pages ? ` · ${extracted.pages} pages` : ''}`,
         level,
       );
     } catch (err) {
@@ -1124,7 +1197,10 @@ export class InputBar {
       sendBtn.title = sending ? 'Stop generation' : 'Send (Enter) · Shift+Enter for new line';
       sendBtn.innerHTML = icon(sending ? 'stop' : 'send');
     }
-    if (textarea) textarea.disabled = sending;
+    // Keep the textarea editable while a response streams. The send button becomes
+    // Stop, and Enter is ignored until generation finishes, but the user can still
+    // draft the next message and use Shift+Enter for a newline.
+    if (textarea) textarea.disabled = false;
     this._refreshDraftState();
   }
 

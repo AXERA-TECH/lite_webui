@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { store } from '../src/store.js';
+import { normalizeBaseUrl, store } from '../src/store.js';
 
 describe('store – default settings', () => {
   it('default apiKey is empty string', () => {
@@ -27,6 +27,14 @@ describe('store – default settings', () => {
   });
 });
 
+describe('store – API base URL normalization', () => {
+  it('accepts both server-root and OpenAI-style /v1 base URLs', () => {
+    expect(normalizeBaseUrl('http://192.0.2.10:18080')).toBe('http://192.0.2.10:18080');
+    expect(normalizeBaseUrl('http://192.0.2.10:18080/v1')).toBe('http://192.0.2.10:18080');
+    expect(normalizeBaseUrl('http://192.0.2.10:18080/v1/')).toBe('http://192.0.2.10:18080');
+  });
+});
+
 describe('store – saveSettings', () => {
   it('persists and retrieves settings', () => {
     store.saveSettings({ apiKey: 'sk-abc', baseUrl: 'http://example.com', theme: 'dark' });
@@ -48,8 +56,8 @@ describe('store – saveSettings', () => {
   });
 
   it('normalizes optional device metrics URLs and rejects non-HTTP values', () => {
-    store.saveSettings({ deviceMetricsUrl: 'http://10.126.35.46:8888/api/all/' });
-    expect(store.getSettings().deviceMetricsUrl).toBe('http://10.126.35.46:8888/api/all');
+    store.saveSettings({ deviceMetricsUrl: 'http://192.0.2.20:8888/api/all/' });
+    expect(store.getSettings().deviceMetricsUrl).toBe('http://192.0.2.20:8888/api/all');
 
     store.saveSettings({ deviceMetricsUrl: 'javascript:alert(1)' });
     expect(store.getSettings().deviceMetricsUrl).toBe('');
