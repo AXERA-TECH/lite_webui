@@ -15,16 +15,26 @@ unless you explicitly export them.
 
 If the video does not play inline, [download it here](https://github.com/AXERA-TECH/lite_webui/raw/main/assets/lite_webui_sd1.5_ocr_demo.mov).
 
-## Quick start
+## Quick install and first use
 
-Requirements:
+Lite WebUI has the same browser UI in both installation modes. The difference is
+only where the static files are served:
 
-- Node.js 18 or newer
-- An OpenAI-compatible API
+| Mode | Best for | Node.js requirement | UI address |
+|---|---|---|---|
+| PC / development host | development and debugging | Node.js 18+ on that PC | `http://localhost:5173/` |
+| AX8860 board | field demo / fixed installation | Node.js only on the build PC; not needed on the board | `http://<board-ip>:18100/` |
 
-Start the development server:
+Both modes require an OpenAI-compatible inference endpoint. Lite WebUI does not
+start or manage a model by itself.
+
+### 1. Run on a PC
+
+From a fresh checkout:
 
 ```bash
+git clone https://github.com/AXERA-TECH/lite_webui.git
+cd lite_webui
 npm install
 npm run dev
 ```
@@ -32,34 +42,23 @@ npm run dev
 Open:
 
 ```text
-http://localhost:5173
+http://localhost:5173/
 ```
 
-Then configure one endpoint:
-
-1. Open **Settings**.
-2. Enter the server root URL, for example `http://127.0.0.1:18080`.
-   A copied URL ending in `/v1` is also accepted and normalized automatically.
-3. Enter an API key if your server requires one.
-4. Click **Fetch Models**.
-5. Select a model in the top bar.
-6. Start chatting.
-
-For a static production build:
+For a local production-build smoke test:
 
 ```bash
 npm run build
 npm run preview
 ```
 
-The production output is static files. Your model API must allow browser CORS,
-be served behind a reverse proxy, or share the same origin as Lite WebUI.
+The production output is static. The configured model API must allow browser
+CORS, be served behind a reverse proxy, or share the same origin as Lite WebUI.
 
-### Deploy the production build on an AX8860 board
+### 2. Install on an AX8860 board
 
-Lite WebUI itself is a static frontend; it does not require Node.js on the board.
-The AX8860 image only needs Python's built-in HTTP server, which is already
-available on the current Debian 13 board image.
+The board serves the static `dist/` files with Python's built-in HTTP server.
+Node.js is only needed on the PC that builds the bundle.
 
 The tested field-demo layout is:
 
@@ -73,12 +72,12 @@ The tested field-demo layout is:
 Keep port 18100 outside the llama-server port pool so Model Manager cannot
 allocate it for a model runtime.
 
-#### 1. Build and copy the static files
+#### Build and copy
 
-On the development host:
+On the development PC:
 
 ```bash
-cd lite_webui
+npm install
 npm run build
 tar -czf litewebui-dist.tar.gz -C dist .
 scp litewebui-dist.tar.gz root@<board-ip>:/tmp/
@@ -91,11 +90,10 @@ mkdir -p /mnt/tangqi/litewebui
 tar -xzf /tmp/litewebui-dist.tar.gz -C /mnt/tangqi/litewebui
 ```
 
-The current build is only about 4.7 MB and contains all JavaScript, CSS, fonts,
-and lazy-loaded document parsers. It has no runtime dependency on an external
-CDN.
+The build contains all JavaScript, CSS, fonts, and lazy-loaded document parsers.
+It has no runtime dependency on an external CDN.
 
-#### 2. Create a persistent static-service unit
+#### Create a persistent service
 
 Create `/etc/systemd/system/litewebui.service` on the board:
 
@@ -136,46 +134,15 @@ systemctl enable --now litewebui.service
 systemctl status litewebui.service --no-pager
 ```
 
-If a transient test unit is still running, stop it before enabling the
-persistent service:
-
-```bash
-systemctl stop lite-webui-demo.service 2>/dev/null || true
-```
-
 Open the UI from a browser:
 
 ```text
 http://<board-ip>:18100/
 ```
 
-#### 3. Configure the inference endpoint
+#### Update an installed board copy
 
-In **Settings**, use the llama-server root URL:
-
-```text
-http://<board-ip>:18080
-```
-
-A copied OpenAI-style URL ending in `/v1` is also accepted and normalized
-automatically:
-
-```text
-http://<board-ip>:18080/v1
-```
-
-The browser calls llama-server directly. The AXERA llama-server build used for
-the field demo returns the required CORS headers, so a reverse proxy is not
-required for this layout.
-
-Browser settings are stored per origin. When moving from a development address
-such as `http://<development-host>:5176/` to the board address
-`http://<board-ip>:18100/`, configure the endpoint and model capabilities once
-in the new browser.
-
-#### 4. Update an installed board copy
-
-On the development host:
+On the development PC:
 
 ```bash
 npm run build
@@ -190,19 +157,40 @@ tar -xzf /tmp/litewebui-dist.tar.gz -C /mnt/tangqi/litewebui
 systemctl restart litewebui.service
 ```
 
-#### Field-demo notes
+### 3. First use in either mode
 
-- Start or enable the required llama-server runtime separately; Lite WebUI is
-  only the chat frontend and does not launch a model by itself.
-- Use a fixed board IP or a direct/private network for the demo. If the board
-  IP changes, update the API Base URL in Settings.
-- Microphone capture in browsers normally requires HTTPS or `localhost`. For an
-  offline HTTP demo, prefer uploading an audio file instead of live recording.
-- The optional Device Metrics URL should point to an aggregator reachable from
-  the demo laptop, for example `http://<monitor-host>:8888/api/all`.
-- Python's static server does not compress files. The first local-network load
-  is still small, but nginx or another gzip-capable server can be used later for
-  a larger deployment.
+1. Start or identify an OpenAI-compatible inference endpoint.
+2. Open Lite WebUI and click **Settings**.
+3. Enter the endpoint root URL, for example `http://127.0.0.1:18080` when the
+   model runs on the same PC, or `http://<board-ip>:18080` for an AX8860 board.
+   A copied URL ending in `/v1` is also accepted and normalized automatically.
+4. Enter an API key only if the endpoint requires one.
+5. Click **Fetch Models**.
+6. Select a model in the top bar.
+7. Set **Max Context Tokens** to the model's real limit. The default is 8K and
+   only the approved 8K-256K presets are offered.
+8. Close Settings and send a message.
+
+Browser settings and conversations are stored per UI origin. When moving from a
+development address such as `http://<development-host>:5173/` to
+`http://<board-ip>:18100/`, configure the endpoint and model capabilities once in
+the new browser origin.
+
+For a board demo, the browser calls llama-server directly. The AXERA
+llama-server build used for the field demo returns the required CORS headers, so
+a reverse proxy is not required for this layout.
+
+### Installation notes
+
+- Start or enable the required model runtime separately.
+- Use a fixed board IP or a direct/private network for the demo. If the board IP
+  changes, update the API Base URL in Settings.
+- Microphone capture normally requires HTTPS or `localhost`. For an offline HTTP
+  board demo, prefer uploading an audio file instead of live recording.
+- Optional AX8860 device metrics need a reachable read-only tempmon aggregator,
+  for example `http://<monitor-host>:8888/api/all`.
+- Python's static server does not compress files. The bundle is still small, but
+  nginx or another gzip-capable server can be used for a larger deployment.
 
 ## What can it do?
 
@@ -239,7 +227,7 @@ The workflow is defined in:
 .github/workflows/ci.yml
 ```
 
-## First-time setup
+## Configuration reference
 
 ### 1. API endpoint
 
@@ -264,8 +252,9 @@ without the conventional `/v1` prefix.
 
 ### 2. Context window
 
-**Max Context Tokens** defaults to **256Ki tokens (262,144)**. Adjust it to
-the real context limit of the selected model.
+**Max Context Tokens** defaults to **8K tokens (8,192)**. The selector only
+offers the approved presets: **8K, 16K, 32K, 64K, 128K, and 256K**. Adjust it
+to the real context limit of the selected model.
 Lite WebUI uses this value for the `ctx` badge and automatic context resets.
 
 ### 3. Model capabilities
@@ -475,9 +464,11 @@ The panel can show:
 - board agent online/offline state
 - llama-server offline/loading/ready/generating state
 - model, slot, and context usage
+- CPU load average, core count, and frequency
 - CMM and OS memory
 - NPU temperature and TDP frequency
 - network RX/TX
+- root disk usage
 - llama-server process RSS
 - 60-second or 5-minute resource trends
 
@@ -606,6 +597,10 @@ Clearing the browser's site data resets the app.
 | localStorage quota errors | Lower document extraction limit or export/delete old conversations |
 
 ## Development
+
+Agents and infrequent contributors should start with
+[`docs/skills.md`](docs/skills.md). It summarizes the project boundary, source
+map, commands, feature-specific rules, and debug checklist.
 
 ```bash
 npm run dev       # development server

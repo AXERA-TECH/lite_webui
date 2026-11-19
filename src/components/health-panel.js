@@ -48,7 +48,11 @@ export function findActiveDevice(payload, baseUrl) {
 }
 
 export async function fetchDeviceMetrics(url) {
-  const response = await fetch(String(url || ''), {
+  const target = new URL(String(url || ''), window.location.href);
+  // tempmon omits history from /api/all by default. Lite WebUI offers a
+  // five-minute trend selector, so explicitly request its bounded ring buffer.
+  target.searchParams.set('history', '300');
+  const response = await fetch(target.toString(), {
     cache: 'no-store',
     headers: { Accept: 'application/json' },
   });
@@ -66,6 +70,36 @@ function formatTokens(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return '—';
   return number.toLocaleString();
+}
+
+function formatCpuLoad(load = {}) {
+  const values = [load['1'], load['5'], load['15']].map(value => Number(value));
+  if (!values.every(Number.isFinite)) return '—';
+  return values.map(value => value.toFixed(2)).join(' / ');
+}
+
+function formatCpuInfo(metrics = {}) {
+  const cores = Number(metrics.cpu_cores);
+  const frequencies = Array.isArray(metrics.cpu_freqs)
+    ? metrics.cpu_freqs.map(value => Number(value)).filter(Number.isFinite)
+    : [];
+  const coreText = Number.isFinite(cores) && cores > 0 ? `${cores} cores` : '—';
+  if (!frequencies.length) return coreText;
+  const min = Math.min(...frequencies);
+  const max = Math.max(...frequencies);
+  const frequencyText = min === max
+    ? `${min} MHz`
+    : `${min}-${max} MHz`;
+  return `${coreText} · ${frequencyText}`;
+}
+
+function formatRootDisk(metrics = {}) {
+  const disks = Array.isArray(metrics.disks) ? metrics.disks : [];
+  const root = disks.find(disk => disk?.mount === '/') || {};
+  const total = Number(root.total_kb);
+  const used = Number(root.used_kb);
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(used)) return '—';
+  return `${formatKb(used)} / ${formatKb(total)}`;
 }
 
 export function filterDeviceHistory(samples, seconds, now = null) {
@@ -411,7 +445,19 @@ export class HealthPanel {
     if (!mount) return;
     const settings = store.getSettings();
     if (!settings.deviceMetricsUrl) {
-      mount.innerHTML = '';
+      mount.innerHTML = `
+        <section class="rounded-xl border border-dashed border-[var(--c-bd)] p-4">
+          <div class="flex items-center gap-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-[var(--c-tx3)] opacity-40"></span>
+            <h3 class="text-sm font-medium text-[var(--c-tx)]">Device metrics disabled</h3>
+          </div>
+          <p class="mt-1 text-xs text-[var(--c-tx3)]">
+            Configure Settings → Device Metrics with a read-only tempmon URL, for example
+            <code>http://&lt;monitor-host&gt;:8888/api/all</code>, to show CPU load, OS/CMM memory,
+            network, disk, temperatures, and inference state.
+          </p>
+        </section>
+      `;
       return;
     }
 
@@ -557,10 +603,13 @@ export class HealthPanel {
           <div><div class="text-[var(--c-tx3)]">Model</div><div class="mt-0.5 truncate font-medium" title="${escapeHtml(server?.model || '')}">${escapeHtml(server?.model || '—')}</div></div>
           <div><div class="text-[var(--c-tx3)]">Slot</div><div class="mt-0.5 font-medium">${escapeHtml(server?.slot_state || '—')}</div></div>
           <div><div class="text-[var(--c-tx3)]">Context</div><div class="mt-0.5 font-medium">${context}</div></div>
+          <div><div class="text-[var(--c-tx3)]">CPU load (1/5/15)</div><div class="mt-0.5 font-medium">${formatCpuLoad(metrics.load)}</div></div>
+          <div><div class="text-[var(--c-tx3)]">CPU</div><div class="mt-0.5 font-medium">${formatCpuInfo(metrics)}</div></div>
           <div><div class="text-[var(--c-tx3)]">CMM</div><div class="mt-0.5 font-medium">${formatKb(cmm.used_kb)} / ${formatKb(cmm.total_kb)}</div></div>
           <div><div class="text-[var(--c-tx3)]">OS memory</div><div class="mt-0.5 font-medium">${formatKb(Number(memory.total_kb || 0) - Number(memory.avail_kb || 0))} / ${formatKb(memory.total_kb)}</div></div>
           <div><div class="text-[var(--c-tx3)]">NPU max temp</div><div class="mt-0.5 font-medium">${maxTemp == null ? '—' : `${maxTemp.toFixed(1)}°C`}</div></div>
           <div><div class="text-[var(--c-tx3)]">Network</div><div class="mt-0.5 font-medium">↓${Number(network.rx_mbps || 0).toFixed(1)} / ↑${Number(network.tx_mbps || 0).toFixed(1)} Mbps</div></div>
+          <div><div class="text-[var(--c-tx3)]">Root disk</div><div class="mt-0.5 font-medium">${formatRootDisk(metrics)}</div></div>
           <div><div class="text-[var(--c-tx3)]">Ports</div><div class="mt-0.5 font-medium">${inference.port_range?.[0] || 18080}-${inference.port_range?.[1] || 18089} · ${inference.online_count || 0} online</div></div>
           <div><div class="text-[var(--c-tx3)]">Agent age</div><div class="mt-0.5 font-medium">${board.age_ms == null ? '—' : formatLatency(board.age_ms)}</div></div>
           <div><div class="text-[var(--c-tx3)]">Agent / BSP</div><div class="mt-0.5 truncate font-medium" title="${escapeHtml(`${agentInfo.version || '—'} / ${agentInfo.bsp_version || '—'}`)}">${escapeHtml(agentInfo.version || '—')} · ${escapeHtml(agentInfo.bsp_version || '—')}</div></div>

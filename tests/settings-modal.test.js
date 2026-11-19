@@ -245,28 +245,22 @@ describe('SettingsModal', () => {
   });
 });
 
-describe('default context window settings', () => {
-  it('shows the 256Ki default and restores it when cleared and saved', () => {
+describe('context window settings', () => {
+  it('offers only the approved context presets and defaults to 8K', () => {
     const modal = mountModal();
-    const input = modal.el.querySelector('#settings-context-limit');
-    expect(input.value).toBe('262144');
-    expect(input.placeholder).toBe('262144');
-    expect(modal.el.querySelector('#settings-context-threshold').value).toBe('85');
-    input.value = '';
-    modal.el.querySelector('#settings-save').click();
-    expect(store.getSettings().contextLimitTokens).toBe(262144);
-    expect(store.getSettings().contextResetThresholdPercent).toBe(85);
-    modal.hide();
-    modal.show();
-    expect(input.value).toBe('262144');
+    const select = modal.el.querySelector('#settings-context-limit');
+    expect(select.value).toBe('8192');
+    expect([...select.options].map((option) => option.value)).toEqual([
+      '8192', '16384', '32768', '65536', '131072', '262144',
+    ]);
   });
 
-  it('shows and retains an existing explicit 4096-token setting', () => {
-    store.saveSettings({ contextLimitTokens: 4096 });
+  it('selects and retains an approved context preset', () => {
+    store.saveSettings({ contextLimitTokens: 131072 });
     const modal = mountModal();
-    expect(modal.el.querySelector('#settings-context-limit').value).toBe('4096');
+    expect(modal.el.querySelector('#settings-context-limit').value).toBe('131072');
     modal.el.querySelector('#settings-save').click();
-    expect(store.getSettings().contextLimitTokens).toBe(4096);
+    expect(store.getSettings().contextLimitTokens).toBe(131072);
   });
 });
 

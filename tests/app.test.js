@@ -140,12 +140,12 @@ describe('App context reset accounting', () => {
     store.setCurrentModel('http://a.local', 'model-a');
 
     const { app } = mountApp();
-    expect(app.inputBar.el.querySelector('#context-info').textContent).not.toBe('ctx 0/262k');
+    expect(app.inputBar.el.querySelector('#context-info').textContent).not.toBe('ctx 0/8.2k');
 
     await app._handleSend('/reset', null, null, null);
 
     expect(store.getCurrentConversation().messages).toHaveLength(0);
-    expect(app.inputBar.el.querySelector('#context-info').textContent).toBe('ctx 0/262k');
+    expect(app.inputBar.el.querySelector('#context-info').textContent).toBe('ctx 0/8.2k');
   });
 
   it('switching models resets the API-context counter while preserving visual history', () => {
@@ -159,14 +159,14 @@ describe('App context reset accounting', () => {
     app._bindEvents();
     app._pushSessionMsg(conv.id, { role: 'user', content: 'visual user', timestamp: 'visual-user' });
     app._pushSessionMsg(conv.id, { role: 'assistant', content: 'visual assistant', timestamp: 'visual-assistant' });
-    expect(app.inputBar.el.querySelector('#context-info').textContent).not.toBe('ctx 0/262k');
+    expect(app.inputBar.el.querySelector('#context-info').textContent).not.toBe('ctx 0/8.2k');
 
     document.dispatchEvent(new CustomEvent('model:changed', { detail: { model: 'model-b' } }));
 
     expect(app._activeContextModel).toBe('model-b');
     expect(store.getCurrentConversation().messages).toHaveLength(0);
     expect(app._sessionMessages.get(conv.id)).toHaveLength(4);
-    expect(app.inputBar.el.querySelector('#context-info').textContent).toBe('ctx 0/262k');
+    expect(app.inputBar.el.querySelector('#context-info').textContent).toBe('ctx 0/8.2k');
     expect(app.chat.el.textContent).toContain('Context /reset');
   });
 });

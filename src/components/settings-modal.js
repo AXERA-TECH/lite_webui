@@ -2,6 +2,7 @@ import { store } from '../store.js';
 import { DEFAULT_CAPABILITIES, getCapabilities } from '../capabilities.js';
 import { fetchModels } from '../api.js';
 import {
+  CONTEXT_LIMIT_OPTIONS,
   DEFAULT_CONTEXT_LIMIT_TOKENS,
   DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT,
 } from '../context.js';
@@ -16,6 +17,11 @@ function escapeHtml(value) {
 
 function genId() {
   return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function contextLimitOption(value) {
+  const label = value >= 1024 ? `${value / 1024}K` : `${value}`;
+  return `<option value="${value}">${label} / ${value.toLocaleString('en-US')} tokens</option>`;
 }
 
 export class SettingsModal {
@@ -73,8 +79,11 @@ export class SettingsModal {
               <div class="space-y-3">
                 <div>
                   <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-context-limit">Max Context Tokens</label>
-                  <input id="settings-context-limit" type="number" min="1024" step="1024" class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] placeholder-[var(--c-txph)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors" placeholder="${DEFAULT_CONTEXT_LIMIT_TOKENS}" />
-                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Used for the context badge and auto-reset logic.</p>
+                  <select id="settings-context-limit"
+                    class="w-full bg-[var(--c-sf)] border border-[var(--c-bd)] rounded-lg px-3 py-2 text-sm text-[var(--c-tx)] focus:outline-none focus:border-[var(--c-bd-hi)] transition-colors">
+                    ${CONTEXT_LIMIT_OPTIONS.map(contextLimitOption).join('')}
+                  </select>
+                  <p class="mt-1 text-xs text-[var(--c-tx3)]">Recommended preset: 8K. Used for the context badge and auto-reset logic.</p>
                 </div>
                 <div>
                   <label class="block text-xs text-[var(--c-tx3)] mb-1.5" for="settings-context-threshold">Auto-reset Threshold (%)</label>
@@ -439,7 +448,11 @@ export class SettingsModal {
     this._parameterSession++;
     this._parameterDrafts = new Map();
     const settings = store.getSettings();
-    this.el.querySelector('#settings-context-limit').value = settings.contextLimitTokens || '';
+    this.el.querySelector('#settings-context-limit').value = String(
+      CONTEXT_LIMIT_OPTIONS.includes(settings.contextLimitTokens)
+        ? settings.contextLimitTokens
+        : DEFAULT_CONTEXT_LIMIT_TOKENS
+    );
     this.el.querySelector('#settings-context-threshold').value =
       settings.contextResetThresholdPercent || DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT;
     this.el.querySelector('#settings-device-metrics-url').value = settings.deviceMetricsUrl || '';
@@ -681,10 +694,7 @@ export class SettingsModal {
       }
       parameterWrites.push({ draft, parameters: result.values });
     }
-    const rawContextLimit = this.el.querySelector('#settings-context-limit').value.trim();
-    const contextLimitTokens = rawContextLimit
-      ? Math.max(1024, Math.round(Number(rawContextLimit) || DEFAULT_CONTEXT_LIMIT_TOKENS))
-      : DEFAULT_CONTEXT_LIMIT_TOKENS;
+    const contextLimitTokens = Number(this.el.querySelector('#settings-context-limit').value);
     const rawThreshold = Number(this.el.querySelector('#settings-context-threshold').value);
     const contextResetThresholdPercent = Number.isFinite(rawThreshold)
       ? Math.min(95, Math.max(50, Math.round(rawThreshold)))

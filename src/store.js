@@ -1,5 +1,5 @@
 import { sanitizeGenerationParameters } from './generation-parameters.js';
-import { DEFAULT_CONTEXT_LIMIT_TOKENS } from './context.js';
+import { DEFAULT_CONTEXT_LIMIT_TOKENS, normalizeContextLimitTokens } from './context.js';
 
 // LocalStorage keys
 const KEYS = {
@@ -87,7 +87,6 @@ function isLegacyCapabilityMap(value) {
 
 function normalizeSettings(settings = {}) {
   const merged = { ...DEFAULT_SETTINGS, ...settings };
-  const contextLimitTokens = Number(merged.contextLimitTokens);
   const contextResetThresholdPercent = Number(merged.contextResetThresholdPercent);
   const temperature = merged.temperature === '' || merged.temperature === null || merged.temperature === undefined
     ? null : Number(merged.temperature);
@@ -97,9 +96,7 @@ function normalizeSettings(settings = {}) {
     ? null : Number(merged.topP);
 
   merged.baseUrl = normalizeBaseUrl(merged.baseUrl);
-  merged.contextLimitTokens = Number.isFinite(contextLimitTokens) && contextLimitTokens >= 1024
-    ? Math.round(contextLimitTokens)
-    : DEFAULT_SETTINGS.contextLimitTokens;
+  merged.contextLimitTokens = normalizeContextLimitTokens(merged.contextLimitTokens);
 
   merged.contextResetThresholdPercent = Number.isFinite(contextResetThresholdPercent)
     ? Math.min(95, Math.max(50, Math.round(contextResetThresholdPercent)))
