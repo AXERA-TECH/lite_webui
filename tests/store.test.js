@@ -35,6 +35,24 @@ describe('store – API base URL normalization', () => {
   });
 });
 
+describe('store – launch parameters', () => {
+  it('configures a launched endpoint and model from URL parameters', () => {
+    const result = store.applyLaunchParameters(new URLSearchParams(
+      '?api=http%3A%2F%2F192.0.2.10%3A18080%2Fv1&model=fixture-model'
+    ));
+
+    expect(result.baseUrl).toBe('http://192.0.2.10:18080');
+    expect(result.modelId).toBe('fixture-model');
+    expect(store.getActiveEndpoint().baseUrl).toBe('http://192.0.2.10:18080');
+    expect(store.getAvailableModels('http://192.0.2.10:18080')).toEqual(['fixture-model']);
+    expect(store.getCurrentModel('http://192.0.2.10:18080')).toBe('fixture-model');
+  });
+
+  it('ignores invalid launch endpoints', () => {
+    expect(store.applyLaunchParameters(new URLSearchParams('?api=javascript%3Aalert(1)'))).toBeNull();
+  });
+});
+
 describe('store – saveSettings', () => {
   it('persists and retrieves settings', () => {
     store.saveSettings({ apiKey: 'sk-abc', baseUrl: 'http://example.com', theme: 'dark' });

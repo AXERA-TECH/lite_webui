@@ -326,6 +326,37 @@ export const store = {
     localStorage.setItem(KEYS.ACTIVE_ENDPOINT, id);
   },
 
+  applyLaunchParameters(params = new URLSearchParams(window.location.search)) {
+    const rawBaseUrl = params.get('api') || params.get('apiBaseUrl');
+    if (!rawBaseUrl) return null;
+    if (!/^https?:\/\//i.test(rawBaseUrl)) return null;
+
+    const baseUrl = normalizeBaseUrl(rawBaseUrl);
+    if (!baseUrl) return null;
+
+    const endpoints = this.getEndpoints();
+    const existing = endpoints.find(endpoint => endpoint.baseUrl === baseUrl);
+    let endpointId = existing?.id;
+    if (!existing) {
+      endpointId = uuid();
+      endpoints.push({
+        id: endpointId,
+        name: params.get('apiName') || 'Launched endpoint',
+        baseUrl,
+        apiKey: '',
+      });
+    }
+    this.saveEndpoints(endpoints);
+    this.setActiveEndpointId(endpointId);
+
+    const modelId = params.get('model');
+    if (modelId) {
+      this.saveAvailableModels(baseUrl, [modelId]);
+      this.setCurrentModel(baseUrl, modelId);
+    }
+    return { baseUrl, modelId: modelId || null, endpointId };
+  },
+
   getActiveEndpoint() {
     const id = this.getActiveEndpointId();
     const eps = this.getEndpoints();
