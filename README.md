@@ -11,6 +11,8 @@ unless you explicitly export them.
 
 ## Demo
 
+![Lite WebUI chat preview](assets/lite-webui-preview.png)
+
 <video src="https://github.com/AXERA-TECH/lite_webui/raw/main/assets/lite_webui_sd1.5_ocr_demo.mov" controls width="100%"></video>
 
 If the video does not play inline, [download it here](https://github.com/AXERA-TECH/lite_webui/raw/main/assets/lite_webui_sd1.5_ocr_demo.mov).
