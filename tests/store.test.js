@@ -14,8 +14,8 @@ describe('store – default settings', () => {
     expect(store.getSettings().theme).toBe('light');
   });
 
-  it('default contextLimitTokens is 262144', () => {
-    expect(store.getSettings().contextLimitTokens).toBe(262144);
+  it('default contextLimitTokens is 8192', () => {
+    expect(store.getSettings().contextLimitTokens).toBe(8192);
   });
 
   it('default contextResetThresholdPercent is 85', () => {
@@ -51,7 +51,7 @@ describe('store – saveSettings', () => {
   it('invalid context settings are normalized back to safe defaults', () => {
     store.saveSettings({ contextLimitTokens: null, contextResetThresholdPercent: 999 });
     const settings = store.getSettings();
-    expect(settings.contextLimitTokens).toBe(262144);
+    expect(settings.contextLimitTokens).toBe(8192);
     expect(settings.contextResetThresholdPercent).toBe(95);
   });
 
@@ -276,17 +276,21 @@ describe('store – endpoints', () => {
   });
 });
 
-describe('context default compatibility', () => {
-  it.each([4096, 65536])('preserves existing explicit context limit %i', (limit) => {
+describe('context preset compatibility', () => {
+  it.each([
+    [4096, 8192],
+    [65536, 65536],
+    [200000, 262144],
+  ])('normalizes legacy context limit %i to preset %i', (limit, expected) => {
     localStorage.setItem('lw_settings', JSON.stringify({ contextLimitTokens: limit }));
-    expect(store.getSettings().contextLimitTokens).toBe(limit);
+    expect(store.getSettings().contextLimitTokens).toBe(expected);
     store.saveSettings(store.getSettings());
-    expect(store.getSettings().contextLimitTokens).toBe(limit);
+    expect(store.getSettings().contextLimitTokens).toBe(expected);
   });
 
-  it.each([null, '', 'invalid', -1, 512])('falls back to 262144 for invalid context limit %s', (limit) => {
+  it.each([null, '', 'invalid', -1, 512])('falls back to 8192 for invalid context limit %s', (limit) => {
     localStorage.setItem('lw_settings', JSON.stringify({ contextLimitTokens: limit }));
-    expect(store.getSettings().contextLimitTokens).toBe(262144);
+    expect(store.getSettings().contextLimitTokens).toBe(8192);
   });
 });
 

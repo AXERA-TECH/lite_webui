@@ -10,8 +10,8 @@ import {
 describe('context helpers – resolveContextConfig', () => {
   it('falls back to the default context window when nothing is configured', () => {
     const config = resolveContextConfig({}, '');
-    expect(DEFAULT_CONTEXT_LIMIT_TOKENS).toBe(262144);
-    expect(config.maxTokens).toBe(262144);
+    expect(DEFAULT_CONTEXT_LIMIT_TOKENS).toBe(8192);
+    expect(config.maxTokens).toBe(8192);
     expect(config.resetPercent).toBe(DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT);
     expect(config.source).toBe('default');
   });
@@ -30,11 +30,11 @@ describe('context helpers – resolveContextConfig', () => {
 
   it('respects thresholds below the default warning band', () => {
     const config = resolveContextConfig({
-      contextLimitTokens: 4096,
+      contextLimitTokens: 8192,
       contextResetThresholdPercent: 70,
     }, '');
 
-    expect(config.resetTokens).toBe(Math.floor(4096 * 0.7));
+    expect(config.resetTokens).toBe(Math.floor(8192 * 0.7));
     expect(config.warnTokens).toBe(config.resetTokens);
   });
 
@@ -64,6 +64,6 @@ describe('api helpers – formatCompactTokenCount', () => {
   });
 });
 
-it.each([null, '', 'invalid', -1, Infinity])('uses 262144 context tokens for invalid runtime config %s', (limit) => {
-  expect(resolveContextConfig({ contextLimitTokens: limit }).maxTokens).toBe(262144);
+it.each([null, '', 'invalid', -1, Infinity])('uses 8192 context tokens for invalid runtime config %s', (limit) => {
+  expect(resolveContextConfig({ contextLimitTokens: limit }).maxTokens).toBe(8192);
 });

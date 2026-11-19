@@ -17,10 +17,14 @@ const payload = {
       age_ms: 120,
       data: {
         agent: { version: '2.0.0', bsp_version: 'Ax_Version V0.6.0', chip_type: 'AX8860P_CHIP' },
+        load: { '1': 1.25, '5': 0.75, '15': 0.5 },
         mem: { total_kb: 1024 * 1024 * 16, avail_kb: 1024 * 1024 * 10 },
         cmm: { total_kb: 1024 * 1024 * 48, used_kb: 1024 * 1024 * 14 },
         net: { rx_mbps: 3.2, tx_mbps: 1.1 },
+        disks: [{ mount: '/', total_kb: 1024 * 1024 * 100, used_kb: 1024 * 1024 * 37 }],
         zones: [{ c: 45.2 }, { c: 48.7 }],
+        cpu_cores: 16,
+        cpu_freqs: [1650, 1650],
         npu: { tdp_freq_mhz: 800 },
         llama: { process_count: 1, rss_kb: 1024 * 1024 * 1.2 },
       },
@@ -99,17 +103,26 @@ describe('HealthPanel device metrics', () => {
       }
       return { ok: true, json: async () => ({ data: [{ id: 'Qwen3.6-35B-A3B' }] }) };
     });
-
     const panel = new HealthPanel();
     document.body.appendChild(panel.render());
     panel.show();
+    const metricsCall = await vi.waitFor(() => {
+      const call = globalThis.fetch.mock.calls.find(([calledUrl]) => String(calledUrl).includes('/api/all?history=300'));
+      expect(call).toBeTruthy();
+      return call;
+    });
+    expect(metricsCall[0]).toBe('http://192.0.2.20:8888/api/all?history=300');
 
     const section = document.querySelector('#device-metrics-mount');
     await vi.waitFor(() => expect(section.textContent).toContain('Device · Shanghai'));
     expect(section.textContent).toContain('Device · Shanghai');
     expect(section.textContent).toContain('Inference generating');
     expect(section.textContent).toContain('Qwen3.6-35B-A3B');
+    expect(section.textContent).toContain('CPU load (1/5/15)');
+    expect(section.textContent).toContain('1.25 / 0.75 / 0.50');
+    expect(section.textContent).toContain('16 cores · 1650 MHz');
     expect(section.textContent).toContain('14.0 GB / 48.0 GB');
+    expect(section.textContent).toContain('37.0 GB / 100.0 GB');
     expect(section.textContent).toContain('48.7°C');
     expect(section.textContent).toContain('Resource trends');
     expect(section.textContent).toContain('CMM used');
@@ -145,7 +158,7 @@ describe('HealthPanel device metrics', () => {
     vi.useRealTimers();
   });
 
-  it('hides device diagnostics when no metrics URL is configured', async () => {
+  it('explains how to enable device diagnostics when no metrics URL is configured', async () => {
     store.saveEndpoints([{ id: 'ep1', name: 'Shanghai', baseUrl: 'http://192.0.2.10:18082/v1', apiKey: '' }]);
     store.setActiveEndpointId('ep1');
     store.saveSettings({ deviceMetricsUrl: '' });
@@ -155,7 +168,9 @@ describe('HealthPanel device metrics', () => {
     panel.show();
     await panel._refreshDeviceMetrics();
 
-    expect(document.querySelector('#device-metrics-mount')?.textContent).toBe('');
+    expect(document.querySelector('#device-metrics-mount')?.textContent).toContain('Device metrics disabled');
+    const text = document.querySelector('#device-metrics-mount')?.textContent.replace(/\s+/g, ' ');
+    expect(text).toContain('CPU load, OS/CMM memory, network');
     panel.hide();
   });
 });

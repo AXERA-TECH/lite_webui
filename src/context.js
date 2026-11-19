@@ -1,6 +1,7 @@
 import { estimateMessageTokens } from './api.js';
 
-export const DEFAULT_CONTEXT_LIMIT_TOKENS = 256 * 1024;
+export const CONTEXT_LIMIT_OPTIONS = Object.freeze([8192, 16384, 32768, 65536, 131072, 262144]);
+export const DEFAULT_CONTEXT_LIMIT_TOKENS = CONTEXT_LIMIT_OPTIONS[0];
 export const DEFAULT_CONTEXT_WARN_PERCENT = 80;
 export const DEFAULT_CONTEXT_RESET_THRESHOLD_PERCENT = 85;
 export const DEFAULT_CONTEXT_RESPONSE_RESERVE = 2048;
@@ -14,6 +15,18 @@ function toPositiveInteger(value) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+export function normalizeContextLimitTokens(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_CONTEXT_LIMIT_TOKENS;
+
+  // Keep the setting aligned with the product-approved context presets. Legacy
+  // values are snapped to the nearest preset instead of silently persisting an
+  // option that is no longer visible in the selector.
+  return CONTEXT_LIMIT_OPTIONS.reduce((closest, option) => (
+    Math.abs(option - parsed) < Math.abs(closest - parsed) ? option : closest
+  ));
 }
 
 export function resolveContextConfig(settings = {}, modelId = '') {
