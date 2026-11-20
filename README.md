@@ -208,7 +208,7 @@ a reverse proxy is not required for this layout.
 | Speech output | Generate speech; VoxCPM2 PCM can stream while playing | `/v1/audio/speech` |
 | Productivity | Search conversations, save prompts, edit and rerun, switch branches | Local browser data |
 | Diagnostics | Check endpoint health and AX8860 board state | `/v1/models`, optional metrics API |
-| Performance | Show TTFT, prefill, decode, and token counts reported by the backend | Streaming response metadata |
+| Performance | Show backend timing and token counts, plus live client-measured TTFT and decode speed for SGLang | Streaming response metadata |
 
 ## Continuous integration
 
@@ -494,10 +494,8 @@ new prefilled tokens
 output tokens
 ```
 
-Metrics are shown only when the backend reports them. The UI does not replace
-them with client-side timing.
-
-Supported sources:
+Server-reported metrics appear below the completed assistant response. SGLang
+can also show client-measured TTFT and decode speed while the response streams.
 
 ### AXERA extension fields on `usage`
 
@@ -536,6 +534,23 @@ Aliases such as `time_to_first_token_ms`, `prefill_tokens_per_second`, and
 
 Here, `prompt_ms` is shown as TTFT, `prompt_per_second` as prefill speed, and
 `predicted_per_second` as decode speed.
+
+### SGLang continuous token usage
+
+Click **Fetch Models** in Settings to detect models whose `/v1/models` entries
+report `owned_by: "sglang"`. Refresh the model list once for an endpoint
+already saved in Lite WebUI.
+
+For detected models, Lite WebUI requests continuous usage alongside final usage.
+If a gateway rejects the continuous usage option, Lite WebUI retries with
+standard final usage. **TTFT (client)** measures the browser time from sending
+the chat request to receiving the first text or reasoning chunk.
+**decode (client)** divides the difference between the latest and first
+cumulative completion token counts by the browser time between those output
+chunks. Network and proxy buffering can
+affect both measurements. The final usage-only chunk updates token totals. The
+browser rate requires two timed samples. Reported server timings take
+precedence.
 
 ## API compatibility summary
 

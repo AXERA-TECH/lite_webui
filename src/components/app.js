@@ -532,18 +532,26 @@ export class App {
     let autoStopped = false;
     let lastRepCheckLen = 0;
     const autoStopRepetition = settings.autoStopRepetition !== false;
+    const startMessage = () => {
+      if (!started) {
+        this.chat.startAssistantMessage();
+        started = true;
+      }
+    };
     try {
       for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, {
         signal,
         onMetrics: (m) => { metrics = m; },
+        onMetricsProgress: (m) => {
+          startMessage();
+          this.chat.updateStreamingMetrics(m);
+        },
+        continuousUsage: store.modelSupportsContinuousUsage(cfg.baseUrl, model),
         ...store.getGenerationParameters(cfg.baseUrl, model),
         idleTimeoutMs: 60000,
         retries: 2,
       })) {
-        if (!started) {
-          this.chat.startAssistantMessage();
-          started = true;
-        }
+        startMessage();
         fullText += chunk;
         this.chat.appendToAssistantMessage(chunk);
         // Throttle the (non-trivial) repetition check to every ~64 new chars.
@@ -557,7 +565,7 @@ export class App {
         }
       }
 
-      if (!started) this.chat.startAssistantMessage();
+      startMessage();
 
       // Finalize
       if (autoStopped) {
@@ -579,7 +587,7 @@ export class App {
     } catch (err) {
       if (err.name === 'AbortError' || err.name === 'TimeoutError') {
         // User stopped, or the stream went idle — finalize whatever arrived.
-        if (!started) this.chat.startAssistantMessage();
+        startMessage();
         this.chat.finalizeAssistantMessage(fullText, model, metrics);
         if (err.name === 'TimeoutError') {
           this.chat.showError('Warning: stream timed out (idle) — showing partial output.');
@@ -1216,6 +1224,8 @@ export class App {
       for await (const chunk of streamCompletion(cfg.baseUrl, cfg.apiKey, model, apiMessages, {
         signal,
         onMetrics: (m) => { metrics = m; },
+        onMetricsProgress: (m) => this.chat.updateStreamingMetrics(m),
+        continuousUsage: store.modelSupportsContinuousUsage(cfg.baseUrl, model),
         ...store.getGenerationParameters(cfg.baseUrl, model),
         idleTimeoutMs: 60000,
         retries: 2,

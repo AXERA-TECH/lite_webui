@@ -1,6 +1,6 @@
 import { store } from '../store.js';
 import { DEFAULT_CAPABILITIES, getCapabilities } from '../capabilities.js';
-import { fetchModels } from '../api.js';
+import { fetchModelCatalog } from '../api.js';
 import {
   CONTEXT_LIMIT_OPTIONS,
   DEFAULT_CONTEXT_LIMIT_TOKENS,
@@ -779,9 +779,9 @@ export class SettingsModal {
     }
 
     try {
-      const models = await fetchModels(ep.baseUrl, ep.apiKey);
+      const { models, continuousUsageModels } = await fetchModelCatalog(ep.baseUrl, ep.apiKey);
       this._fetchedModels = [...new Set([...this._fetchedModels, ...models])];
-      store.saveAvailableModels(ep.baseUrl, models);
+      store.saveAvailableModels(ep.baseUrl, models, { continuousUsageModels });
       const currentModel = store.getCurrentModel(ep.baseUrl);
       if (currentModel && !models.includes(currentModel)) {
         store.setCurrentModel(ep.baseUrl, '');

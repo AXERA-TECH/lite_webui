@@ -469,6 +469,166 @@ describe('streamCompletion – metrics interface', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    ['final usage only', 'data: {"choices":[{"delta":{"content":"x"}}]}\n\n'],
+    ['buffered output', [
+      'data: {"choices":[{"delta":{"content":"x"}}],"usage":{"completion_tokens":1}}\n\n',
+      'data: {"choices":[{"delta":{"content":"y"}}],"usage":{"completion_tokens":2}}\n\n',
+    ].join('')],
+  ])('omits client decode speed with %s', async (_label, output) => {
+    const reader = { read: vi.fn()
+      .mockResolvedValueOnce({ done: false, value: new TextEncoder().encode(output) })
+      .mockResolvedValueOnce({
+        done: false,
+        value: new TextEncoder().encode('data: {"choices":[],"usage":{"completion_tokens":3}}\n\n'),
+      })
+      .mockResolvedValue({ done: true }) };
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, body: { getReader: () => reader } })));
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(100);
+    const onMetricsProgress = vi.fn();
+    const onMetrics = vi.fn();
+
+    try {
+      for await (const _ of streamCompletion('http://fixture', '', 'model', [], {
+        continuousUsage: true, onMetricsProgress, onMetrics,
+      })) {}
+      expect(onMetricsProgress).toHaveBeenCalled();
+      expect(onMetrics).toHaveBeenCalledWith({ completionTokens: 3, clientTtftMs: 0 });
+    } finally {
+      vi.unstubAllGlobals();
+      clock.mockRestore();
+    }
+  });
+
+  it('retains the observed rate and token total when a continuous stream is stopped', async () => {
+    let elapsed = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    const read = vi.fn()
+      .mockImplementationOnce(async () => ({
+        done: false,
+        value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"x"}}],"usage":{"completion_tokens":1}}\n\n'),
+      }))
+      .mockImplementationOnce(async () => {
+        elapsed = 125;
+        return {
+          done: false,
+          value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"y"}}],"usage":{"completion_tokens":8}}\n\n'),
+        };
+      });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, body: { getReader: () => ({ read }) } })));
+    const onMetrics = vi.fn();
+    const controller = new AbortController();
+
+    try {
+      for await (const chunk of streamCompletion('http://fixture', '', 'model', [], {
+        continuousUsage: true, onMetrics, signal: controller.signal,
+      })) {
+        if (chunk === 'y') {
+          controller.abort();
+          break;
+        }
+      }
+      expect(onMetrics).toHaveBeenCalledWith({ completionTokens: 8, clientTtftMs: 0, clientDecodeTps: 56 });
+    } finally {
+      vi.unstubAllGlobals();
+      clock.mockRestore();
+    }
+  });
+
+  it('keeps server timings when a continuous stream ends with token counts only', async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"x"}}],"usage":{"completion_tokens":1,"ttft_ms":40}}\n\n',
+      'data: {"choices":[{"delta":{"content":"y"}}],"usage":{"completion_tokens":5,"decode_tps":49}}\n\n',
+      'data: {"choices":[],"usage":{"completion_tokens":6}}\n\n',
+    ];
+    let elapsed = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    const read = vi.fn(async () => {
+      const chunk = chunks.shift();
+      elapsed += 100;
+      return chunk ? { done: false, value: new TextEncoder().encode(chunk) } : { done: true };
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, body: { getReader: () => ({ read }) } })));
+    const onMetricsProgress = vi.fn();
+    const onMetrics = vi.fn();
+
+    try {
+      for await (const _ of streamCompletion('http://fixture', '', 'model', [], {
+        continuousUsage: true, onMetricsProgress, onMetrics,
+      })) {}
+      expect(onMetricsProgress).toHaveBeenLastCalledWith({
+        ttftMs: 40, decodeTps: 49, clientTtftMs: undefined, clientDecodeTps: undefined,
+      });
+      expect(onMetrics).toHaveBeenCalledWith({ ttftMs: 40, decodeTps: 49, completionTokens: 6 });
+    } finally {
+      vi.unstubAllGlobals();
+      clock.mockRestore();
+    }
+  });
+
+  it('retries without continuous usage only when the gateway rejects that option', async () => {
+    let elapsed = 100;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    const reader = { read: vi.fn().mockImplementationOnce(async () => {
+      elapsed = 800;
+      return {
+        done: false,
+        value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n'),
+      };
+    }) };
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => {
+        elapsed = 500;
+        return new Response('{"detail":[{"loc":["body","stream_options","continuous_usage_stats"],"msg":"Extra inputs are not permitted"}]}', { status: 422 });
+      })
+      .mockResolvedValueOnce({ ok: true, body: { getReader: () => reader } })
+      .mockResolvedValueOnce(new Response('{"error":{"message":"invalid temperature"}}', { status: 400 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onMetrics = vi.fn();
+    const chunks = [];
+
+    try {
+      for await (const chunk of streamCompletion('http://fixture', '', 'model', [], {
+        continuousUsage: true, onMetrics,
+      })) chunks.push(chunk);
+      expect(chunks).toEqual(['answer']);
+      expect(onMetrics).toHaveBeenCalledWith({ clientTtftMs: 300 });
+      const originalBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(originalBody.stream_options).toEqual({ include_usage: true, continuous_usage_stats: true });
+      expect(JSON.parse(fetchMock.mock.calls[1][1].body))
+        .toEqual({ ...originalBody, stream_options: { include_usage: true } });
+
+      const rejected = streamCompletion('http://fixture', '', 'model', [], { continuousUsage: true });
+      await expect(rejected.next()).rejects.toThrow('invalid temperature');
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+      clock.mockRestore();
+    }
+  });
+
+  it('retries a failed handshake for ordinary backends with the original request body', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('connection lost'))
+      .mockResolvedValueOnce({ ok: true, body: { getReader: () => ({ read: async () => ({ done: true }) }) } });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.useFakeTimers();
+
+    try {
+      const completion = streamCompletion('http://fixture', '', 'model', [], { retries: 1 });
+      const result = completion.next();
+      await vi.advanceTimersByTimeAsync(400);
+      await expect(result).resolves.toMatchObject({ done: true });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const body = fetchMock.mock.calls[0][1].body;
+      expect(JSON.parse(body).stream_options).toEqual({ include_usage: true });
+      expect(fetchMock.mock.calls[1][1].body).toBe(body);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('captures llama.cpp top-level timings from the final SSE chunk', async () => {
     const sseChunks = [
       'data: {"choices":[{"delta":{"content":"上海"}}]}\n\n',

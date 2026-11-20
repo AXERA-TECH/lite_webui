@@ -545,19 +545,20 @@ export class Chat {
   }
 
   // Builds the performance-metrics pill row shown under an assistant message.
-  // Fully data-driven: one pill per recognized metric the backend reported, in
-  // the fixed order below; nothing renders when none are present. The UI never
-  // computes chat token metrics — see extractServerMetrics(). Speech latency is
-  // explicitly client-measured and labeled separately.
+  // Client-measured rates and latencies carry their own source labels.
   _buildMetricsRow(metrics) {
     if (!metrics) return null;
 
     const specs = [
       { field: 'elapsedMs',        icon: 'clock',      label: 'time',     format: formatTtft, title: 'Client-measured request duration' },
       { field: 'ttftMs',          icon: 'zap',        label: 'TTFT',    format: formatTtft, title: 'Time to first token — reported by backend' },
+      { field: 'clientTtftMs',    icon: 'zap',        label: 'TTFT (client)', format: formatTtft,
+        title: 'Browser time from request to first text or reasoning chunk' },
       { field: 'firstAudioMs',    icon: 'zap',        label: 'first audio', format: formatTtft, title: 'Client-measured time to first playable audio chunk' },
       { field: 'prefillTps',      icon: 'trendingUp', label: 'prefill', format: formatTps,  title: 'Prefill speed — reported by backend' },
       { field: 'decodeTps',       icon: 'gauge',      label: 'decode',  format: formatTps,  title: 'Decode speed — reported by backend' },
+      { field: 'clientDecodeTps', icon: 'gauge',      label: 'decode (client)', format: formatTps,
+        title: 'Average decode speed from backend token counts and browser stream timing' },
       { field: 'inputTokens',     icon: '',           label: 'in',      format: String,     title: 'Input tokens — reported by backend' },
       { field: 'prefillTokens',   icon: '',           label: 'new',     format: String,
         title: 'Tokens newly prefilled this turn (the rest were reused from KV cache)',
@@ -712,10 +713,31 @@ export class Chat {
     this._scrollToBottom();
   }
 
+  updateStreamingMetrics(metrics) {
+    const msgDiv = this._streamingEl?.parentNode;
+    if (!msgDiv) return;
+    const previousRow = msgDiv.querySelector('[data-streaming-metrics]');
+    const displayValues = [
+      formatTtft(metrics.ttftMs),
+      formatTtft(metrics.clientTtftMs),
+      formatTps(metrics.decodeTps),
+      formatTps(metrics.clientDecodeTps),
+    ].join('|');
+    if (previousRow?.dataset.streamingMetrics === displayValues) return;
+
+    const row = this._buildMetricsRow(metrics);
+    if (!row) return;
+    row.dataset.streamingMetrics = displayValues;
+    row.setAttribute('aria-live', 'off');
+    if (previousRow) previousRow.replaceWith(row);
+    else msgDiv.appendChild(row);
+  }
+
   finalizeAssistantMessage(fullText, model = '', metrics = null) {
     if (!this._streamingEl) return;
 
     const msgDiv = this._streamingEl.parentNode;
+    msgDiv.querySelector('[data-streaming-metrics]')?.remove();
     const { thinkText, mainText } = parseThinkStream(fullText);
 
     // Remove streaming think block

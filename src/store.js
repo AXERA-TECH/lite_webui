@@ -251,16 +251,23 @@ export const store = {
 
   getAvailableModels(baseUrl = this.getSettings().baseUrl) {
     const catalogs = load(KEYS.AVAILABLE_MODELS, {});
-    const list = catalogs[normalizeBaseUrl(baseUrl)];
+    const entry = catalogs[normalizeBaseUrl(baseUrl)];
+    const list = Array.isArray(entry) ? entry : entry?.models;
     return Array.isArray(list) ? [...new Set(list.filter(Boolean))].sort() : [];
   },
 
-  saveAvailableModels(baseUrl, models) {
+  saveAvailableModels(baseUrl, models, { continuousUsageModels = [] } = {}) {
     const catalogs = load(KEYS.AVAILABLE_MODELS, {});
-    catalogs[normalizeBaseUrl(baseUrl)] = Array.isArray(models)
-      ? [...new Set(models.filter(Boolean))].sort()
-      : [];
+    const list = Array.isArray(models) ? [...new Set(models.filter(Boolean))].sort() : [];
+    const supported = list.filter((model) => continuousUsageModels.includes(model));
+    catalogs[normalizeBaseUrl(baseUrl)] = supported.length ? { models: list, continuousUsageModels: supported } : list;
     save(KEYS.AVAILABLE_MODELS, catalogs);
+  },
+
+  modelSupportsContinuousUsage(baseUrl, model) {
+    const catalogs = load(KEYS.AVAILABLE_MODELS, {});
+    const supported = catalogs[normalizeBaseUrl(baseUrl)]?.continuousUsageModels;
+    return Array.isArray(supported) && supported.includes(model);
   },
 
   getCurrentModel(baseUrl = this.getSettings().baseUrl) {

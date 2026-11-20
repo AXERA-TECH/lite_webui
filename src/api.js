@@ -51,6 +51,11 @@ export function buildRequestConfig(baseUrl, apiKey, isDev = import.meta.env.DEV,
 }
 
 export async function fetchModels(baseUrl, apiKey) {
+  const { models } = await fetchModelCatalog(baseUrl, apiKey);
+  return models;
+}
+
+export async function fetchModelCatalog(baseUrl, apiKey) {
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
   const url = `${urlBase}${apiEndpointPath(baseUrl, '/models')}`;
   const res = await fetch(url, { headers });
@@ -61,7 +66,13 @@ export async function fetchModels(baseUrl, apiKey) {
   const data = await res.json();
   // OpenAI returns { data: [{ id, ... }] }
   const list = data.data || data.models || data;
-  return Array.isArray(list) ? list.map(m => (typeof m === 'string' ? m : m.id)).filter(Boolean).sort() : [];
+  const entries = Array.isArray(list) ? list : [];
+  return {
+    models: entries.map((entry) => typeof entry === 'string' ? entry : entry?.id).filter(Boolean).sort(),
+    // Other providers can reject SGLang's nonstandard stream option.
+    continuousUsageModels: entries.filter((entry) => entry?.owned_by === 'sglang' && entry.id)
+      .map((entry) => entry.id),
+  };
 }
 
 export async function checkEndpointHealth(baseUrl, apiKey) {
@@ -206,9 +217,8 @@ function pickFiniteNumber(...values) {
 /**
  * Extracts server-reported performance metrics from a streaming `usage` object.
  *
- * This is a display UI: the frontend never estimates these numbers itself. It
- * shows only what the backend reports (see README → Performance Metrics), so the
- * values reflect real server-side inference rather than browser/network timing.
+ * These fields reflect backend timings and token counts. Client timings are
+ * tracked separately in streamCompletion().
  * Returns null when the backend provided none of the recognised fields.
  *
  * @param {object?} usage  Final `usage` object from the stream, if any.
@@ -249,10 +259,7 @@ export function extractServerMetrics(usage) {
       : null,
   );
 
-  // Include only the metrics the backend actually reported. The UI renders one
-  // pill per present field and nothing when the object is empty — it never
-  // computes or estimates any value itself. A non-positive speed / token count
-  // is treated as "not reported" (avoids showing a bogus "0").
+  // A non-positive speed or token count is treated as absent.
   const metrics = {};
   if (ttftRaw != null && ttftRaw >= 0) metrics.ttftMs = ttftRaw;
   if (prefillRaw != null && prefillRaw > 0) metrics.prefillTps = prefillRaw;
@@ -285,17 +292,19 @@ export function formatTps(tps) {
 
 export async function* streamCompletion(baseUrl, apiKey, model, messages, options = {}) {
   const {
-    onUsage, onMetrics, signal,
-    idleTimeoutMs = 0, retries = 0,
+    onUsage, onMetrics, onMetricsProgress, signal,
+    continuousUsage = false, idleTimeoutMs = 0, retries = 0,
   } = options;
   const { urlBase, headers } = buildRequestConfig(baseUrl, apiKey);
   const url = `${urlBase}${apiEndpointPath(baseUrl, '/chat/completions')}`;
 
   let serverUsage = null;
+  let requestStartedAt = 0;
 
   const bodyObj = {
     ...buildGenerationRequestParameters(options),
-    model, messages, stream: true, stream_options: { include_usage: true },
+    model, messages, stream: true,
+    stream_options: { include_usage: true, ...(continuousUsage ? { continuous_usage_stats: true } : {}) },
   };
 
   // Internal controller: combines the caller's abort signal with an idle timeout.
@@ -317,21 +326,39 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     else signal.addEventListener('abort', onUserAbort, { once: true });
   }
 
+  const requestStream = () => {
+    armIdle();
+    if (continuousUsage) requestStartedAt = performance.now();
+    return fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(bodyObj),
+      signal: ctl.signal,
+    });
+  };
+
   // Retry only the initial handshake (before streaming starts). Once the stream
   // begins we cannot safely resume mid-stream.
   let res = null;
   let lastErr = null;
+  let errorText;
   const attempts = Math.max(0, Math.round(retries)) + 1;
   for (let i = 0; i < attempts; i++) {
     if (ctl.signal.aborted) break;
     try {
-      armIdle();
-      res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(bodyObj),
-        signal: ctl.signal,
-      });
+      let response = await requestStream();
+      if (bodyObj.stream_options.continuous_usage_stats && [400, 422].includes(response.status)) {
+        const rejection = await response.text().catch(() => '');
+        if (ctl.signal.aborted) throw ctl.signal.reason;
+        if (rejection.includes('continuous_usage_stats')) {
+          // Older gateways can expose SGLang models but reject its stream option.
+          delete bodyObj.stream_options.continuous_usage_stats;
+          response = await requestStream();
+        } else {
+          errorText = rejection;
+        }
+      }
+      res = response;
       disarmIdle();
       break;
     } catch (err) {
@@ -344,7 +371,7 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
   if (!res) throw lastErr || new Error('Request failed');
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = errorText ?? await res.text().catch(() => '');
     let errMsg = `API error (${res.status})`;
     try {
       const json = JSON.parse(text);
@@ -362,7 +389,7 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     if (json) {
       const content = json.choices?.[0]?.message?.content;
       if (content) yield content;
-      captureFinalMetrics(json);
+      captureUsage(json);
     }
     if (onMetrics) {
       const metrics = extractServerMetrics(serverUsage);
@@ -375,17 +402,27 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
   const decoder = new TextDecoder();
   let buffer = '';
   let reasoningOpen = false;
+  let firstDecodeSample = null;
+  let lastDecodeTokens = 0;
+  let clientTtftMs = null;
+  let clientDecodeTps = null;
+  let receivedAt = 0;
 
-  function captureFinalMetrics(json) {
+  function captureUsage(json) {
     const usage = json?.usage && typeof json.usage === 'object' ? json.usage : {};
     const timings = json?.timings && typeof json.timings === 'object' ? json.timings : null;
     if (!Object.keys(usage).length && !timings) return;
 
     // Keep the public `usage` shape, but attach llama.cpp's top-level timings so
     // extractServerMetrics can normalize both AXERA extensions and native fields.
-    serverUsage = timings
-      ? { ...usage, timings: { ...(usage.timings || {}), ...timings } }
-      : usage;
+    const frameUsage = timings ? { ...usage, timings: { ...usage.timings, ...timings } } : usage;
+    if (continuousUsage && serverUsage) {
+      const previousTimings = serverUsage.timings;
+      serverUsage = { ...serverUsage, ...frameUsage };
+      if (previousTimings) serverUsage.timings = { ...previousTimings, ...frameUsage.timings };
+    } else {
+      serverUsage = frameUsage;
+    }
     if (usage.total_tokens != null) onUsage?.(usage);
   }
 
@@ -403,6 +440,47 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     return out;
   };
 
+  function collectMetrics() {
+    const metrics = extractServerMetrics(serverUsage) ?? {};
+    if (metrics.ttftMs == null && clientTtftMs != null) metrics.clientTtftMs = clientTtftMs;
+    if (metrics.decodeTps == null && clientDecodeTps != null) metrics.clientDecodeTps = clientDecodeTps;
+    return metrics;
+  }
+
+  function readEvent(data) {
+    let json;
+    try {
+      json = JSON.parse(data);
+    } catch {
+      return '';
+    }
+    if (json?.error) {
+      throw new Error(json.error.message || 'server stream error');
+    }
+    captureUsage(json);
+    const text = emitDelta(json?.choices?.[0]?.delta);
+    if (!continuousUsage || !text) return text;
+
+    clientTtftMs ??= receivedAt - requestStartedAt;
+    const tokens = json?.usage?.completion_tokens;
+    // Count only chunks carrying output, including reasoning. Empty role and
+    // final usage chunks can report counts without representing decode time.
+    if (Number.isSafeInteger(tokens) && tokens >= lastDecodeTokens) {
+      firstDecodeSample ??= { receivedAt, tokens };
+      lastDecodeTokens = tokens;
+      const elapsedMs = receivedAt - firstDecodeSample.receivedAt;
+      const generatedTokens = tokens - firstDecodeSample.tokens;
+      if (elapsedMs > 0 && generatedTokens > 0) {
+        clientDecodeTps = generatedTokens * 1000 / elapsedMs;
+      }
+    }
+    if (onMetricsProgress) {
+      const { ttftMs, clientTtftMs, decodeTps, clientDecodeTps } = collectMetrics();
+      onMetricsProgress({ ttftMs, clientTtftMs, decodeTps, clientDecodeTps });
+    }
+    return text;
+  }
+
   try {
     let streamDone = false;
     while (true) {
@@ -410,6 +488,8 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
       const { done, value } = await reader.read();
       if (done) break;
 
+      // Events from the same read share a timestamp taken before the first yield.
+      if (continuousUsage) receivedAt = performance.now();
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop(); // keep incomplete line
@@ -422,21 +502,8 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
         const data = trimmed.slice(6);
         if (data === '[DONE]') { streamDone = true; break; }
 
-        let json = null;
-        try {
-          json = JSON.parse(data);
-        } catch {
-          // ignore malformed SSE lines
-        }
-        if (json?.error) {
-          throw new Error(json.error.message || 'server stream error');
-        }
-        if (json) {
-          captureFinalMetrics(json);
-          const delta = json.choices?.[0]?.delta;
-          const text = emitDelta(delta);
-          if (text) yield text;
-        }
+        const text = readEvent(data);
+        if (text) yield text;
       }
       if (streamDone) break;
     }
@@ -445,31 +512,18 @@ export async function* streamCompletion(baseUrl, apiKey, model, messages, option
     if (buffer.trim().startsWith('data: ')) {
       const data = buffer.trim().slice(6);
       if (data && data !== '[DONE]') {
-        let json = null;
-        try {
-          json = JSON.parse(data);
-        } catch { /* ignore */ }
-        if (json?.error) {
-          throw new Error(json.error.message || 'server stream error');
-        }
-        if (json) {
-          captureFinalMetrics(json);
-          const delta = json.choices?.[0]?.delta;
-          const text = emitDelta(delta);
-          if (text) yield text;
-        }
+        const text = readEvent(data);
+        if (text) yield text;
       }
     }
     if (reasoningOpen) yield '</think>';
   } finally {
     disarmIdle();
     if (signal) signal.removeEventListener('abort', onUserAbort);
-    // Emit whatever performance metrics the backend reported (normal end, early
-    // stop, or abort). The frontend never fabricates these — no server data,
-    // no metrics shown.
+    // Keep the last observed rate if the stream stopped before final usage.
     if (onMetrics) {
-      const metrics = extractServerMetrics(serverUsage);
-      if (metrics) onMetrics(metrics);
+      const metrics = collectMetrics();
+      if (Object.keys(metrics).length) onMetrics(metrics);
     }
   }
 }

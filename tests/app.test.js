@@ -316,6 +316,66 @@ describe('App performance metrics', () => {
     expect(chatEl?.textContent).toContain('out 16');
   });
 
+  it('detects SGLang and shows client-measured decode speed during and after streaming', async () => {
+    const baseUrl = 'http://sglang.local';
+    const model = 'qwen';
+    setViewport(1280);
+    store.saveSettings({ baseUrl, apiKey: '' });
+    store.saveAvailableModels(baseUrl, [model]); // Pre-existing list with no backend metadata.
+    store.setCurrentModel(baseUrl, model);
+    expect(store.modelSupportsContinuousUsage(baseUrl, model)).toBe(false);
+
+    const { app, root } = mountApp();
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ id: model, owned_by: 'sglang' }, { id: 'compatible' }] }),
+    });
+    globalThis.fetch = fetchMock;
+    await app.settingsModal._fetchModels();
+    expect(store.getAvailableModels(baseUrl)).toEqual(['compatible', model]);
+    expect(store.modelSupportsContinuousUsage(baseUrl, model)).toBe(true);
+    expect(store.modelSupportsContinuousUsage(baseUrl, 'compatible')).toBe(false);
+    expect(store.modelSupportsContinuousUsage('http://other.local', model)).toBe(false);
+
+    let elapsed = 100;
+    let liveText = '';
+    vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
+    const sse = (payload) => ({ done: false, value: new TextEncoder().encode('data: ' + JSON.stringify(payload) + '\n\n') });
+    const read = vi.fn()
+      .mockImplementationOnce(async () => {
+        elapsed = 125;
+        return sse({ choices: [{ delta: { role: 'assistant', content: '' } }], usage: { completion_tokens: 0 } });
+      })
+      .mockImplementationOnce(async () => {
+        elapsed = 1000;
+        return sse({ choices: [{ delta: { reasoning_content: 'Thought' } }], usage: { completion_tokens: 2 } });
+      })
+      .mockImplementationOnce(async () => {
+        elapsed = 1200;
+        return sse({ choices: [{ delta: { content: 'Answer' } }], usage: { completion_tokens: 12 } });
+      })
+      .mockImplementationOnce(async () => {
+        liveText = root.querySelector('[data-streaming-metrics]')?.textContent;
+        elapsed = 2500;
+        return sse({ choices: [], usage: { prompt_tokens: 9, completion_tokens: 13, total_tokens: 22 } });
+      })
+      .mockResolvedValue({ done: true });
+    fetchMock.mockResolvedValueOnce({ ok: true, body: { getReader: () => ({ read }) } });
+
+    await app._handleSend('Hi', null, null, null);
+
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).stream_options)
+      .toEqual({ include_usage: true, continuous_usage_stats: true });
+    expect(liveText).toContain('TTFT (client) 900 ms');
+    expect(liveText).toContain('decode (client) 50.0 tok/s');
+    expect(root.querySelector('[data-streaming-metrics]')).toBeNull();
+    const output = root.querySelector('#chat-messages');
+    expect(output.textContent).toContain('decode (client) 50.0 tok/s');
+    expect(output.textContent).toContain('out 13');
+    expect(store.getCurrentConversation().messages.at(-1).metrics)
+      .toEqual({ inputTokens: 9, completionTokens: 13, clientTtftMs: 900, clientDecodeTps: 50 });
+  });
+
   it('hides the "new" pill when nothing was reused (prefill_tokens == input)', async () => {
     setViewport(1280);
     store.saveSettings({ baseUrl: 'http://a.local', apiKey: '' });
@@ -703,6 +763,7 @@ data: [DONE]
   }
 
   function expectCustom(body) {
+    expect(body.stream_options).toEqual({ include_usage: true });
     expect(body).toMatchObject({ temperature: 0, seed: 0, top_k: -1, chat_template_kwargs: { enable_thinking: false } });
     expect(body).not.toHaveProperty('top_p');
     expect(body).not.toHaveProperty('max_tokens');
